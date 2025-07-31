@@ -35,3 +35,6 @@ vector_store/
 
 # PDF or other generated docs
 *.pdf
+
+ffmpeg/
+ffmpeg.exe

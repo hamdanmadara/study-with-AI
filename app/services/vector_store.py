@@ -59,8 +59,16 @@ class VectorStoreService:
             if any(indicator in text.lower() for indicator in error_indicators):
                 raise ValueError("Cannot store error message as document content")
             
-            if len(text.strip()) < 50:  # Too short to be meaningful content
-                raise ValueError("Document content too short or empty")
+            # Check minimum length based on content type
+            min_length = 20 if metadata.get('file_type') == 'video' else 50
+            if len(text.strip()) < min_length:
+                # For video content, be more flexible with short transcriptions
+                if metadata.get('file_type') == 'video' and len(text.strip()) >= 10:
+                    logger.warning(f"Short video transcription ({len(text.strip())} chars): {text[:100]}...")
+                    # Pad with context for better searchability
+                    text = f"Video transcription (short): {text.strip()}"
+                else:
+                    raise ValueError("Document content too short or empty")
             # Determine content type for optimal chunking
             content_type = metadata.get('file_type', 'general')
             

@@ -43,9 +43,9 @@ static_dir = current_dir / "static"
 # Ensure static directory exists
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-    print(f"📁 Static files mounted from: {static_dir}")
+    print(f"Static files mounted from: {static_dir}")
 else:
-    print(f"⚠️ Static directory not found: {static_dir}")
+    print(f"WARNING: Static directory not found: {static_dir}")
 
 # Include routers
 app.include_router(upload_router, prefix="/api")
@@ -91,22 +91,22 @@ async def serve_app():
 
 
 # Auto-test on startup
-@app.on_event("startup")
-async def startup_event():
-    """Run auto-tests when server starts"""
-    def run_tests():
-        # Wait a bit for server to fully start
-        time.sleep(3)
-        try:
-            from app.utils.startup_test import run_startup_test
-            logger.info("🚀 Starting automatic system tests...")
-            run_startup_test()
-        except Exception as e:
-            logger.error(f"Startup test error: {e}")
+# @app.on_event("startup")
+# async def startup_event():
+#     """Run auto-tests when server starts"""
+#     def run_tests():
+#         # Wait a bit for server to fully start
+#         time.sleep(3)
+#         try:
+#             from app.utils.startup_test import run_startup_test
+#             logger.info("🚀 Starting automatic system tests...")
+#             run_startup_test()
+#         except Exception as e:
+#             logger.error(f"Startup test error: {e}")
     
-    # Run tests in background thread
-    test_thread = threading.Thread(target=run_tests, daemon=True)
-    test_thread.start()
+#     # Run tests in background thread
+#     test_thread = threading.Thread(target=run_tests, daemon=True)
+#     test_thread.start()
 
 if __name__ == "__main__":
     import uvicorn

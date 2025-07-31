@@ -10,11 +10,11 @@ async def test_pdf_processing_auto():
         # Look for any PDF file in the directory
         pdf_files = list(Path(".").glob("*.pdf"))
         if not pdf_files:
-            logger.info("📄 No PDF files found for auto-testing")
+            logger.info("No PDF files found for auto-testing")
             return True
         
         pdf_file = pdf_files[0]
-        logger.info(f"🧪 Auto-testing with PDF: {pdf_file}")
+        logger.info(f"Auto-testing with PDF: {pdf_file}")
         
         # Import services
         from app.services.text_extraction import text_extraction_service
@@ -22,27 +22,27 @@ async def test_pdf_processing_auto():
         from app.services.vector_store import vector_store_service
         
         # Test PDF extraction
-        logger.info("📄 Testing PDF text extraction...")
+        logger.info("Testing PDF text extraction...")
         text = await text_extraction_service.extract_text_from_pdf(str(pdf_file))
-        logger.info(f"✅ Extracted {len(text)} characters from PDF")
+        logger.info(f"Extracted {len(text)} characters from PDF")
         
         # Test embeddings
-        logger.info("🤖 Testing embedding creation...")
+        logger.info("Testing embedding creation...")
         test_text = text[:500] if len(text) > 500 else text
         embedding = await embedding_service.create_single_embedding(test_text)
-        logger.info(f"✅ Created embedding with {len(embedding)} dimensions")
+        logger.info(f"Created embedding with {len(embedding)} dimensions")
         
         # Test vector store
-        logger.info("🗄️ Testing vector store...")
+        logger.info("Testing vector store...")
         chunk_count = await vector_store_service.add_document(
             document_id="startup_test",
             text=text,
             metadata={"filename": str(pdf_file), "file_type": "pdf", "test": True}
         )
-        logger.info(f"✅ Added {chunk_count} chunks to vector store")
+        logger.info(f"Added {chunk_count} chunks to vector store")
         
         # Test search
-        logger.info("🔍 Testing similarity search...")
+        logger.info("Testing similarity search...")
         results = await vector_store_service.search_similar(
             query="What is this document about?",
             document_id="startup_test",
