@@ -1,0 +1,25 @@
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+pydantic
+pydantic-settings
+
+# Text extraction
+pypdf
+moviepy
+openai-whisper
+
+# Vector database and embeddings
+chromadb
+sentence-transformers
+
+# LLM integration
+openai
+httpx
+
+# Utilities
+python-dotenv
+loguru
+tqdm
+numpy

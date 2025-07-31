@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study AI Assistant</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 Study AI Assistant</h1>
+            <p>Upload documents or videos and interact with AI-powered features</p>
+        </header>
+
+        <main>
+            <!-- File Upload Section -->
+            <section class="upload-section">
+                <h2>📁 Upload Document</h2>
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-content">
+                        <div class="upload-icon">📎</div>
+                        <p>Drag & drop your file here or click to browse</p>
+                        <p class="upload-info">Supported: PDF, MP4, AVI, MOV, MKV, WEBM (Max 100MB)</p>
+                        <input type="file" id="fileInput" accept=".pdf,.mp4,.avi,.mov,.mkv,.webm,video/*" hidden>
+                        <button class="upload-btn" id="uploadBtn">Choose File</button>
+                    </div>
+                </div>
+                
+                <div class="upload-progress" id="uploadProgress" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="progressText">Processing...</p>
+                </div>
+            </section>
+
+            <!-- Documents List -->
+            <section class="documents-section">
+                <h2>📄 Your Documents</h2>
+                <div class="documents-list" id="documentsList">
+                    <p class="no-documents">No documents uploaded yet</p>
+                </div>
+            </section>
+
+            <!-- Features Section -->
+            <section class="features-section" id="featuresSection" style="display: none;">
+                <!-- Features will be populated by JavaScript -->
+            </section>
+        </main>
+
+        <!-- Loading Modal -->
+        <div class="modal" id="loadingModal" style="display: none;">
+            <div class="modal-content">
+                <div class="spinner"></div>
+                <p id="loadingText">Processing...</p>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div class="toast" id="toast"></div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
