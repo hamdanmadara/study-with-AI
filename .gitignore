@@ -1,1 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+env/
+ENV/
+*.env
+
+# Environment variable files
 .env
+*.local
+*.local.json
+
+# IDE files
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Uploads, logs, and user-generated files
+uploads/
+*.log
+
+# Vector store (assumed to be generated data)
+vector_store/
+
+# PDF or other generated docs
+*.pdf
