@@ -22,6 +22,7 @@ except ImportError:
 from loguru import logger
 
 from app.core.config import settings
+from typing import Callable
 
 class TextExtractionService:
     def __init__(self):
@@ -112,8 +113,8 @@ class TextExtractionService:
             logger.error(f"Error extracting text from PDF: {e}")
             raise ValueError(f"Failed to extract text from PDF: {str(e)}")
     
-    async def extract_text_from_video(self, file_path: str) -> str:
-        """Extract text from video using MoviePy + OpenAI Whisper with FFmpeg fallback"""
+    async def extract_text_from_video(self, file_path: str, progress_callback: Optional[Callable] = None) -> str:
+        """Extract text from video using segmentation for long videos"""
         
         # Check dependencies
         if not WHISPER_AVAILABLE or not self.whisper_model:
@@ -125,64 +126,498 @@ class TextExtractionService:
         try:
             logger.info(f"Starting video processing for: {file_path}")
             
-            # Create temporary audio file
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-                temp_audio_path = temp_audio.name
-            
+            # Get video duration first - this is critical for segmentation
             try:
-                # Try MoviePy first, fallback to direct FFmpeg if needed
-                if MOVIEPY_AVAILABLE:
-                    try:
-                        await self._optimize_for_transcription_moviepy(file_path, temp_audio_path)
-                    except Exception as e:
-                        logger.warning(f"MoviePy failed, trying direct FFmpeg: {e}")
-                        await self._extract_audio_with_ffmpeg(file_path, temp_audio_path)
-                else:
-                    await self._extract_audio_with_ffmpeg(file_path, temp_audio_path)
-                
-                # Transcribe audio using Whisper
-                logger.info("Starting Whisper transcription...")
-                text = await self._transcribe_with_whisper(temp_audio_path)
-                
-                if not text.strip():
-                    text = "No clear speech detected in this video. The video may contain background music, noise, or speech that was not clearly audible."
-                elif len(text.strip()) < 50:
-                    # For very short transcriptions, add context
-                    logger.info(f"Short transcription detected: '{text.strip()}'")
-                    video_name = Path(file_path).stem
-                    
-                    # Check if it's likely just noise/unclear audio
-                    if len(text.strip()) < 20:
-                        text = f"Video '{video_name}' contains minimal or unclear audio content. Transcription: {text.strip()}"
-                    else:
-                        text = f"Video '{video_name}' contains brief speech: {text.strip()}"
-                
-                logger.info(f"Video processing completed. Extracted {len(text)} characters")
-                return text.strip()
+                video_duration = await self._get_video_duration(file_path)
+                logger.info(f"✅ Successfully detected video duration: {video_duration:.1f} seconds ({video_duration/60:.1f} minutes)")
+            except Exception as duration_error:
+                logger.error(f"❌ Failed to detect video duration: {duration_error}")
+                raise ValueError(f"Cannot process video without knowing its duration: {duration_error}")
             
-            finally:
-                # Clean up temporary audio file
-                if os.path.exists(temp_audio_path):
-                    try:
-                        os.unlink(temp_audio_path)
-                    except OSError:
-                        pass
+            # If video is longer than 5 minutes, use segmentation
+            if video_duration > 300:  # 5 minutes = 300 seconds
+                return await self._process_video_segments(file_path, video_duration, progress_callback)
+            else:
+                # Process normally for short videos
+                if progress_callback:
+                    progress_callback({
+                        'total_duration': video_duration,
+                        'processed_duration': 0,
+                        'total_segments': 1,
+                        'processed_segments': 0,
+                        'current_segment': 1
+                    })
+                
+                result = await self._process_single_video_segment(file_path, 0, video_duration)
+                
+                if progress_callback:
+                    progress_callback({
+                        'total_duration': video_duration,
+                        'processed_duration': video_duration,
+                        'total_segments': 1,
+                        'processed_segments': 1,
+                        'current_segment': 1
+                    })
+                
+                return result
         
         except Exception as e:
             logger.error(f"Error extracting text from video: {e}")
             raise ValueError(f"Failed to extract text from video: {str(e)}")
     
-    async def _extract_audio_with_ffmpeg(self, video_path: str, output_path: str):
-        """Extract audio using direct FFmpeg command as fallback"""
-        try:
-            logger.info("Extracting audio using FFmpeg...")
+    async def extract_text_from_audio(self, file_path: str, progress_callback: Optional[Callable] = None) -> str:
+        """Extract text from audio files using segmentation for long audio"""
+        
+        # Check dependencies
+        if not WHISPER_AVAILABLE or not self.whisper_model:
+            raise ValueError("OpenAI Whisper not available. Please install openai-whisper for audio transcription.")
+        
+        if not self.ffmpeg_available:
+            raise ValueError("FFmpeg not found. Please install FFmpeg to process audio files. Download from https://ffmpeg.org/download.html")
             
-            # Run FFmpeg command to extract audio
+        try:
+            logger.info(f"Starting audio processing for: {file_path}")
+            
+            # Get audio duration first
+            try:
+                audio_duration = await self._get_audio_duration(file_path)
+                logger.info(f"✅ Successfully detected audio duration: {audio_duration:.1f} seconds ({audio_duration/60:.1f} minutes)")
+            except Exception as duration_error:
+                logger.error(f"❌ Failed to detect audio duration: {duration_error}")
+                raise ValueError(f"Cannot process audio without knowing its duration: {duration_error}")
+            
+            # If audio is longer than 5 minutes, use segmentation
+            if audio_duration > 300:  # 5 minutes = 300 seconds
+                return await self._process_audio_segments(file_path, audio_duration, progress_callback)
+            else:
+                # Process normally for short audio
+                if progress_callback:
+                    progress_callback({
+                        'total_duration': audio_duration,
+                        'processed_duration': 0,
+                        'total_segments': 1,
+                        'processed_segments': 0,
+                        'current_segment': 1
+                    })
+                
+                result = await self._process_single_audio_segment(file_path, 0, audio_duration)
+                
+                if progress_callback:
+                    progress_callback({
+                        'total_duration': audio_duration,
+                        'processed_duration': audio_duration,
+                        'total_segments': 1,
+                        'processed_segments': 1,
+                        'current_segment': 1
+                    })
+                
+                return result
+        
+        except Exception as e:
+            logger.error(f"Error extracting text from audio: {e}")
+            raise ValueError(f"Failed to extract text from audio: {str(e)}")
+    
+    async def _get_audio_duration(self, audio_path: str) -> float:
+        """Get audio duration in seconds using multiple methods"""
+        logger.info(f"Attempting to get duration for audio: {audio_path}")
+        
+        # Method 1: Try FFprobe (most reliable for audio)
+        try:
+            logger.info("Trying FFprobe for audio duration detection...")
+            duration = await self._get_duration_ffprobe(audio_path)
+            if duration and duration > 0:
+                logger.info(f"FFprobe detected audio duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
+                return duration
+        except Exception as e:
+            logger.warning(f"FFprobe failed for audio: {e}")
+        
+        # Method 2: Try FFmpeg directly for audio
+        try:
+            logger.info("Trying direct FFmpeg for audio duration detection...")
+            duration = await self._get_duration_ffmpeg_direct(audio_path)
+            if duration and duration > 0:
+                logger.info(f"FFmpeg detected audio duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
+                return duration
+        except Exception as e:
+            logger.warning(f"Direct FFmpeg audio duration detection failed: {e}")
+        
+        # If all methods fail, log error and raise exception
+        logger.error(f"All duration detection methods failed for audio {audio_path}")
+        raise ValueError("Could not determine audio duration. Please ensure the audio file is valid and accessible.")
+    
+    async def _process_audio_segments(self, audio_path: str, total_duration: float, progress_callback: Optional[Callable] = None) -> str:
+        """Process audio in 5-minute segments and combine transcriptions"""
+        segment_duration = 300  # 5 minutes
+        total_segments = int((total_duration + segment_duration - 1) // segment_duration)  # Ceiling division
+        
+        logger.info(f"Processing audio in {total_segments} segments of {segment_duration/60:.1f} minutes each")
+        
+        # Initial progress update
+        if progress_callback:
+            progress_callback({
+                'total_duration': total_duration,
+                'processed_duration': 0,
+                'total_segments': total_segments,
+                'processed_segments': 0,
+                'current_segment': 0
+            })
+        
+        all_transcriptions = []
+        
+        for segment_idx in range(total_segments):
+            start_time = segment_idx * segment_duration
+            end_time = min(start_time + segment_duration, total_duration)
+            
+            logger.info(f"Processing audio segment {segment_idx + 1}/{total_segments}: {start_time/60:.1f}min - {end_time/60:.1f}min")
+            
+            # Update progress before processing segment
+            if progress_callback:
+                progress_callback({
+                    'total_duration': total_duration,
+                    'processed_duration': start_time,
+                    'total_segments': total_segments,
+                    'processed_segments': segment_idx,
+                    'current_segment': segment_idx + 1
+                })
+            
+            try:
+                segment_text = await self._process_single_audio_segment(
+                    audio_path, start_time, end_time - start_time
+                )
+                
+                if segment_text.strip():
+                    # Add segment header for context
+                    segment_header = f"\n[Segment {segment_idx + 1}: {start_time//60:02.0f}:{start_time%60:02.0f} - {end_time//60:02.0f}:{end_time%60:02.0f}]\n"
+                    all_transcriptions.append(segment_header + segment_text.strip())
+                    logger.info(f"Audio segment {segment_idx + 1} transcribed: {len(segment_text)} characters")
+                else:
+                    logger.info(f"Audio segment {segment_idx + 1}: No speech detected")
+                    
+            except Exception as e:
+                logger.error(f"Error processing audio segment {segment_idx + 1}: {e}")
+                all_transcriptions.append(f"\n[Segment {segment_idx + 1}: Error - {str(e)}]\n")
+            
+            # Update progress after processing segment
+            if progress_callback:
+                progress_callback({
+                    'total_duration': total_duration,
+                    'processed_duration': end_time,
+                    'total_segments': total_segments,
+                    'processed_segments': segment_idx + 1,
+                    'current_segment': segment_idx + 1
+                })
+        
+        # Combine all transcriptions
+        final_text = "\n".join(all_transcriptions)
+        
+        if not final_text.strip():
+            audio_name = Path(audio_path).stem
+            final_text = f"Audio '{audio_name}' ({total_duration/60:.1f} minutes) contains no clear speech across {total_segments} segments. The audio may contain background music, noise, or speech that was not clearly audible."
+        
+        logger.info(f"Audio segmentation complete: {len(final_text)} total characters from {total_segments} segments")
+        return final_text.strip()
+    
+    async def _process_single_audio_segment(self, audio_path: str, start_time: float, duration: float) -> str:
+        """Process a single audio segment"""
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+            temp_audio_path = temp_audio.name
+        
+        try:
+            # Extract audio segment using FFmpeg
+            await self._extract_audio_segment_ffmpeg(audio_path, temp_audio_path, start_time, duration)
+            
+            # Transcribe segment
+            text = await self._transcribe_with_whisper(temp_audio_path)
+            return text.strip()
+            
+        finally:
+            # Clean up temporary audio file
+            if os.path.exists(temp_audio_path):
+                try:
+                    os.unlink(temp_audio_path)
+                except OSError:
+                    pass
+    
+    async def _extract_audio_segment_ffmpeg(self, audio_path: str, output_path: str, start_time: float, duration: float):
+        """Extract audio segment using FFmpeg"""
+        try:
+            cmd = [
+                'ffmpeg',
+                '-y',  # Overwrite output file
+                '-i', audio_path,
+                '-ss', str(start_time),  # Start time
+                '-t', str(duration),    # Duration
+                '-acodec', 'pcm_s16le',  # PCM audio codec
+                '-ar', '16000',  # 16kHz sample rate
+                '-ac', '1',  # Mono channel
+                output_path
+            ]
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._run_ffmpeg_command, cmd)
+            
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                raise ValueError("FFmpeg failed to extract audio segment")
+                
+        except Exception as e:
+            logger.error(f"Error extracting audio segment with FFmpeg: {e}")
+            raise
+    
+    async def _get_video_duration(self, video_path: str) -> float:
+        """Get video duration in seconds using multiple methods"""
+        logger.info(f"Attempting to get duration for: {video_path}")
+        
+        # Method 1: Try FFprobe (most reliable)
+        try:
+            logger.info("Trying FFprobe for duration detection...")
+            duration = await self._get_duration_ffprobe(video_path)
+            if duration and duration > 0:
+                logger.info(f"FFprobe detected duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
+                return duration
+        except Exception as e:
+            logger.warning(f"FFprobe failed: {e}")
+        
+        # Method 2: Try MoviePy (good fallback)
+        if MOVIEPY_AVAILABLE:
+            try:
+                logger.info("Trying MoviePy for duration detection...")
+                loop = asyncio.get_event_loop()
+                duration = await loop.run_in_executor(None, self._get_duration_moviepy, video_path)
+                if duration and duration > 0:
+                    logger.info(f"MoviePy detected duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
+                    return duration
+            except Exception as e:
+                logger.warning(f"MoviePy duration detection failed: {e}")
+        
+        # Method 3: Try FFmpeg directly (alternative approach)
+        try:
+            logger.info("Trying direct FFmpeg for duration detection...")
+            duration = await self._get_duration_ffmpeg_direct(video_path)
+            if duration and duration > 0:
+                logger.info(f"FFmpeg detected duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
+                return duration
+        except Exception as e:
+            logger.warning(f"Direct FFmpeg duration detection failed: {e}")
+        
+        # If all methods fail, log error and raise exception instead of defaulting
+        logger.error(f"All duration detection methods failed for {video_path}")
+        raise ValueError("Could not determine video duration. Please ensure the video file is valid and accessible.")
+    
+    async def _get_duration_ffprobe(self, video_path: str) -> float:
+        """Get duration using FFprobe"""
+        cmd = [
+            'ffprobe',
+            '-v', 'error',  # Only show errors
+            '-show_entries', 'format=duration',
+            '-of', 'csv=p=0',
+            video_path
+        ]
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self._run_ffprobe_command, cmd)
+        
+        duration_str = result.stdout.strip()
+        if not duration_str or duration_str == 'N/A':
+            raise ValueError("FFprobe returned invalid duration")
+        
+        return float(duration_str)
+    
+    async def _get_duration_ffmpeg_direct(self, video_path: str) -> float:
+        """Get duration using FFmpeg directly"""
+        cmd = [
+            'ffmpeg',
+            '-i', video_path,
+            '-f', 'null',
+            '-'
+        ]
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self._run_ffmpeg_for_duration, cmd)
+        
+        # Parse duration from FFmpeg output
+        output = result.stderr
+        for line in output.split('\n'):
+            if 'Duration:' in line:
+                # Extract duration in format HH:MM:SS.ss
+                duration_part = line.split('Duration:')[1].split(',')[0].strip()
+                time_parts = duration_part.split(':')
+                if len(time_parts) == 3:
+                    hours = float(time_parts[0])
+                    minutes = float(time_parts[1])
+                    seconds = float(time_parts[2])
+                    total_seconds = hours * 3600 + minutes * 60 + seconds
+                    return total_seconds
+        
+        raise ValueError("Could not parse duration from FFmpeg output")
+    
+    def _run_ffmpeg_for_duration(self, cmd: list):
+        """Run FFmpeg command for duration detection"""
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,  # 1 minute timeout for duration detection
+                check=False  # Don't raise exception on non-zero exit (FFmpeg returns error when using null output)
+            )
+            return result
+        except subprocess.TimeoutExpired:
+            raise ValueError("FFmpeg duration detection timed out")
+    
+    def _run_ffprobe_command(self, cmd: list):
+        """Run FFprobe command synchronously"""
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,  # Increased timeout
+                check=True
+            )
+            logger.debug(f"FFprobe output: {result.stdout.strip()}")
+            return result
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFprobe command failed: {' '.join(cmd)}")
+            logger.error(f"FFprobe stderr: {e.stderr}")
+            raise ValueError(f"FFprobe error: {e.stderr}")
+        except subprocess.TimeoutExpired:
+            raise ValueError("FFprobe command timed out")
+        except FileNotFoundError:
+            raise ValueError("FFprobe not found. Please ensure FFmpeg is properly installed.")
+    
+    def _get_duration_moviepy(self, video_path: str) -> float:
+        """Get video duration using MoviePy"""
+        video = None
+        try:
+            logger.debug(f"Opening video with MoviePy: {video_path}")
+            video = VideoFileClip(video_path)
+            duration = video.duration
+            
+            if not duration or duration <= 0:
+                raise ValueError("MoviePy returned invalid duration")
+            
+            logger.debug(f"MoviePy duration: {duration} seconds")
+            return duration
+            
+        except Exception as e:
+            logger.error(f"MoviePy error: {e}")
+            raise ValueError(f"MoviePy failed to get duration: {e}")
+        finally:
+            if video is not None:
+                try:
+                    video.close()
+                except Exception as close_error:
+                    logger.warning(f"Error closing MoviePy video: {close_error}")
+    
+    async def _process_video_segments(self, video_path: str, total_duration: float, progress_callback: Optional[Callable] = None) -> str:
+        """Process video in 5-minute segments and combine transcriptions"""
+        segment_duration = 300  # 5 minutes
+        total_segments = int((total_duration + segment_duration - 1) // segment_duration)  # Ceiling division
+        
+        logger.info(f"Processing video in {total_segments} segments of {segment_duration/60:.1f} minutes each")
+        
+        # Initial progress update
+        if progress_callback:
+            progress_callback({
+                'total_duration': total_duration,
+                'processed_duration': 0,
+                'total_segments': total_segments,
+                'processed_segments': 0,
+                'current_segment': 0
+            })
+        
+        all_transcriptions = []
+        
+        for segment_idx in range(total_segments):
+            start_time = segment_idx * segment_duration
+            end_time = min(start_time + segment_duration, total_duration)
+            
+            logger.info(f"Processing segment {segment_idx + 1}/{total_segments}: {start_time/60:.1f}min - {end_time/60:.1f}min")
+            
+            # Update progress before processing segment
+            if progress_callback:
+                progress_callback({
+                    'total_duration': total_duration,
+                    'processed_duration': start_time,
+                    'total_segments': total_segments,
+                    'processed_segments': segment_idx,
+                    'current_segment': segment_idx + 1
+                })
+            
+            try:
+                segment_text = await self._process_single_video_segment(
+                    video_path, start_time, end_time - start_time
+                )
+                
+                if segment_text.strip():
+                    # Add segment header for context
+                    segment_header = f"\n[Segment {segment_idx + 1}: {start_time//60:02.0f}:{start_time%60:02.0f} - {end_time//60:02.0f}:{end_time%60:02.0f}]\n"
+                    all_transcriptions.append(segment_header + segment_text.strip())
+                    logger.info(f"Segment {segment_idx + 1} transcribed: {len(segment_text)} characters")
+                else:
+                    logger.info(f"Segment {segment_idx + 1}: No speech detected")
+                    
+            except Exception as e:
+                logger.error(f"Error processing segment {segment_idx + 1}: {e}")
+                all_transcriptions.append(f"\n[Segment {segment_idx + 1}: Error - {str(e)}]\n")
+            
+            # Update progress after processing segment
+            if progress_callback:
+                progress_callback({
+                    'total_duration': total_duration,
+                    'processed_duration': end_time,
+                    'total_segments': total_segments,
+                    'processed_segments': segment_idx + 1,
+                    'current_segment': segment_idx + 1
+                })
+        
+        # Combine all transcriptions
+        final_text = "\n".join(all_transcriptions)
+        
+        if not final_text.strip():
+            video_name = Path(video_path).stem
+            final_text = f"Video '{video_name}' ({total_duration/60:.1f} minutes) contains no clear speech across {total_segments} segments. The video may contain background music, noise, or speech that was not clearly audible."
+        
+        logger.info(f"Video segmentation complete: {len(final_text)} total characters from {total_segments} segments")
+        return final_text.strip()
+    
+    async def _process_single_video_segment(self, video_path: str, start_time: float, duration: float) -> str:
+        """Process a single video segment"""
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+            temp_audio_path = temp_audio.name
+        
+        try:
+            # Extract audio for this segment
+            if MOVIEPY_AVAILABLE:
+                try:
+                    await self._extract_segment_audio_moviepy(video_path, temp_audio_path, start_time, duration)
+                except Exception as e:
+                    logger.warning(f"MoviePy segment extraction failed, trying FFmpeg: {e}")
+                    await self._extract_segment_audio_ffmpeg(video_path, temp_audio_path, start_time, duration)
+            else:
+                await self._extract_segment_audio_ffmpeg(video_path, temp_audio_path, start_time, duration)
+            
+            # Transcribe segment
+            text = await self._transcribe_with_whisper(temp_audio_path)
+            return text.strip()
+            
+        finally:
+            # Clean up temporary audio file
+            if os.path.exists(temp_audio_path):
+                try:
+                    os.unlink(temp_audio_path)
+                except OSError:
+                    pass
+    
+    async def _extract_segment_audio_ffmpeg(self, video_path: str, output_path: str, start_time: float, duration: float):
+        """Extract audio segment using FFmpeg"""
+        try:
             cmd = [
                 'ffmpeg',
                 '-y',  # Overwrite output file
                 '-i', video_path,
-                '-t', '300',  # Limit to 5 minutes
+                '-ss', str(start_time),  # Start time
+                '-t', str(duration),    # Duration
                 '-vn',  # No video
                 '-acodec', 'pcm_s16le',  # PCM audio codec
                 '-ar', '16000',  # 16kHz sample rate
@@ -190,18 +625,66 @@ class TextExtractionService:
                 output_path
             ]
             
-            # Run in executor to avoid blocking
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._run_ffmpeg_command, cmd)
             
             if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                raise ValueError("FFmpeg failed to extract audio")
+                raise ValueError("FFmpeg failed to extract audio segment")
                 
-            logger.info("Audio extracted successfully with FFmpeg")
-            
         except Exception as e:
-            logger.error(f"Error extracting audio with FFmpeg: {e}")
+            logger.error(f"Error extracting audio segment with FFmpeg: {e}")
             raise
+    
+    async def _extract_segment_audio_moviepy(self, video_path: str, output_path: str, start_time: float, duration: float):
+        """Extract audio segment using MoviePy"""
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._extract_segment_sync, video_path, output_path, start_time, duration)
+        except Exception as e:
+            logger.error(f"Error extracting audio segment with MoviePy: {e}")
+            raise
+    
+    def _extract_segment_sync(self, video_path: str, output_path: str, start_time: float, duration: float):
+        """Synchronous segment extraction with MoviePy"""
+        video = None
+        audio = None
+        
+        try:
+            video = VideoFileClip(video_path)
+            
+            # Extract segment
+            end_time = start_time + duration
+            segment = video.subclip(start_time, end_time)
+            
+            # Extract audio
+            audio = segment.audio
+            if audio is None:
+                raise ValueError("No audio track found in video segment")
+            
+            # Write optimized audio file
+            audio.write_audiofile(
+                output_path,
+                logger=None,
+                verbose=False,
+                codec='pcm_s16le',
+                ffmpeg_params=["-ar", "16000", "-ac", "1"]
+            )
+            
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                raise ValueError("Failed to create audio segment file")
+                
+        finally:
+            # Clean up resources
+            if audio is not None:
+                try:
+                    audio.close()
+                except:
+                    pass
+            if video is not None:
+                try:
+                    video.close()
+                except:
+                    pass
     
     def _run_ffmpeg_command(self, cmd: list):
         """Run FFmpeg command synchronously"""
@@ -210,7 +693,7 @@ class TextExtractionService:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minute timeout
+                timeout=600,  # 10 minute timeout for longer videos
                 check=True
             )
             return result
@@ -220,31 +703,27 @@ class TextExtractionService:
         except subprocess.TimeoutExpired:
             raise ValueError("FFmpeg command timed out")
     
+    # Legacy method kept for compatibility - now unused
     async def _optimize_for_transcription_moviepy(self, video_path: str, output_path: str):
-        """Optimize video for transcription using MoviePy"""
+        """Legacy method - now replaced by segment processing"""
+        logger.warning("Using legacy single-segment processing method")
         try:
-            logger.info("Optimizing video for transcription with MoviePy...")
-            
-            # Run in executor to avoid blocking
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._optimize_video_sync, video_path, output_path)
-            
         except Exception as e:
             logger.error(f"Error optimizing video with MoviePy: {e}")
             raise
     
     def _optimize_video_sync(self, video_path: str, output_path: str):
-        """Synchronous video optimization with better error handling"""
+        """Legacy synchronous video optimization - now only for short videos"""
         video = None
         audio = None
         
         try:
             video = VideoFileClip(video_path)
             
-            # Limit to first 5 minutes for faster processing (300 seconds)
-            if video.duration > 300:
-                video = video.subclip(0, 300)
-                logger.info("Video longer than 5 minutes, processing first 5 minutes only")
+            # No duration limit anymore - this is only called for short videos
+            logger.info(f"Processing full video duration: {video.duration:.1f}s")
             
             # Extract audio and optimize for speech recognition
             audio = video.audio
@@ -297,13 +776,13 @@ class TextExtractionService:
             
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, self._whisper_transcribe_sync, audio_path),
-                timeout=120.0  # 2 minute timeout for faster processing
+                timeout=300.0  # 5 minute timeout for segment processing
             )
             
             return result
             
         except asyncio.TimeoutError:
-            raise ValueError("Audio transcription timed out after 2 minutes")
+            raise ValueError("Audio transcription timed out after 5 minutes")
         except Exception as e:
             logger.error(f"Whisper transcription error: {e}")
             raise ValueError(f"Failed to transcribe audio: {str(e)}")

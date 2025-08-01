@@ -1,7 +1,7 @@
 import os
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any
 from pathlib import Path
 
@@ -26,6 +26,8 @@ class DocumentProcessor:
             file_type = DocumentType.PDF
         elif file_extension in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
             file_type = DocumentType.VIDEO
+        elif file_extension in ['.mp3', '.wav', '.m4a', '.aac', '.flac']:
+            file_type = DocumentType.AUDIO
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
         
@@ -52,15 +54,46 @@ class DocumentProcessor:
         try:
             # Update status to processing
             document.status = ProcessingStatus.PROCESSING
+            document.processing_started_at = datetime.now()
             self.processing_documents[document.id] = document
             
             logger.info(f"Starting processing for document {document.id}")
+            
+            # Create progress callback for video processing
+            def update_progress(progress_data):
+                document.total_duration = progress_data.get('total_duration')
+                document.processed_duration = progress_data.get('processed_duration')
+                document.total_segments = progress_data.get('total_segments')
+                document.processed_segments = progress_data.get('processed_segments')
+                document.current_segment = progress_data.get('current_segment')
+                
+                # Calculate estimated completion time
+                if (document.processed_segments and document.total_segments and 
+                    document.processed_segments > 0 and document.processing_started_at):
+                    
+                    elapsed_time = (datetime.now() - document.processing_started_at).total_seconds()
+                    avg_time_per_segment = elapsed_time / document.processed_segments
+                    remaining_segments = document.total_segments - document.processed_segments
+                    estimated_remaining_seconds = remaining_segments * avg_time_per_segment
+                    document.estimated_completion = datetime.now() + timedelta(seconds=estimated_remaining_seconds)
+                
+                # Update cache
+                self.processing_documents[document.id] = document
+                logger.info(f"Progress update for {document.id}: {document.processed_segments}/{document.total_segments} segments")
             
             # Extract text based on file type
             if document.file_type == DocumentType.PDF:
                 text_content = await text_extraction_service.extract_text_from_pdf(document.file_path)
             elif document.file_type == DocumentType.VIDEO:
-                text_content = await text_extraction_service.extract_text_from_video(document.file_path)
+                text_content = await text_extraction_service.extract_text_from_video(
+                    document.file_path, 
+                    progress_callback=update_progress
+                )
+            elif document.file_type == DocumentType.AUDIO:
+                text_content = await text_extraction_service.extract_text_from_audio(
+                    document.file_path, 
+                    progress_callback=update_progress
+                )
             else:
                 raise ValueError(f"Unsupported file type: {document.file_type}")
             
@@ -85,6 +118,7 @@ class DocumentProcessor:
             document.chunk_count = chunk_count
             document.status = ProcessingStatus.COMPLETED
             document.processed_at = datetime.now()
+            document.estimated_completion = None  # Clear estimate when completed
             
             logger.info(f"Successfully processed document {document.id} with {chunk_count} chunks")
             
@@ -92,6 +126,7 @@ class DocumentProcessor:
             logger.error(f"Error processing document {document.id}: {e}")
             document.status = ProcessingStatus.FAILED
             document.error_message = str(e)
+            document.estimated_completion = None  # Clear estimate on failure
         
         finally:
             # Update cache

@@ -6,6 +6,7 @@ from enum import Enum
 class DocumentType(str, Enum):
     PDF = "pdf"
     VIDEO = "video"
+    AUDIO = "audio"
 
 class ProcessingStatus(str, Enum):
     PENDING = "pending"
@@ -24,6 +25,15 @@ class Document(BaseModel):
     created_at: datetime
     processed_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    
+    # Progress tracking fields
+    total_duration: Optional[float] = None  # Total video duration in seconds
+    processed_duration: Optional[float] = None  # Processed duration in seconds
+    total_segments: Optional[int] = None  # Total number of segments
+    processed_segments: Optional[int] = None  # Number of processed segments
+    current_segment: Optional[int] = None  # Currently processing segment number
+    estimated_completion: Optional[datetime] = None  # Estimated completion time
+    processing_started_at: Optional[datetime] = None  # When processing actually started
 
 class QuestionRequest(BaseModel):
     document_id: str

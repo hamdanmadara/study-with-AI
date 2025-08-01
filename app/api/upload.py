@@ -13,7 +13,8 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 ALLOWED_EXTENSIONS = {
     "pdf": [".pdf"],
-    "video": [".mp4", ".avi", ".mov", ".mkv", ".webm"]  # Now enabled!
+    "video": [".mp4", ".avi", ".mov", ".mkv", ".webm"],
+    "audio": [".mp3", ".wav", ".m4a", ".aac", ".flac"]
 }
 
 @router.post("/file")
@@ -36,7 +37,7 @@ async def upload_file(file: UploadFile = File(...)):
         if not allowed:
             raise HTTPException(
                 status_code=400, 
-                detail=f"File type {file_extension} not supported. Supported types: PDF, MP4, AVI, MOV, MKV, WEBM"
+                detail=f"File type {file_extension} not supported. Supported types: PDF, MP4, AVI, MOV, MKV, WEBM, MP3, WAV, M4A, AAC, FLAC"
             )
         
         # Check file size
@@ -106,6 +107,50 @@ async def get_processing_status(document_id: str):
         if document.error_message:
             response_data["error_message"] = document.error_message
         
+        # Add progress information for video/audio processing
+        if document.file_type.value in ["video", "audio"] and document.status.value == "processing":
+        
+            progress_data = {
+                "progress": {
+                    "total_duration_seconds": document.total_duration,
+                    "processed_duration_seconds": document.processed_duration,
+                    "total_segments": document.total_segments,
+                    "processed_segments": document.processed_segments,
+                    "current_segment": document.current_segment
+                }
+            }
+            
+            # Add formatted duration strings
+            if document.total_duration:
+                progress_data["progress"]["total_duration_formatted"] = f"{document.total_duration/60:.1f} minutes"
+            
+            if document.processed_duration:
+                progress_data["progress"]["processed_duration_formatted"] = f"{document.processed_duration/60:.1f} minutes"
+            
+            # Add percentage complete
+            if document.total_segments and document.processed_segments is not None:
+                percentage = (document.processed_segments / document.total_segments) * 100
+                progress_data["progress"]["percentage_complete"] = round(percentage, 1)
+            
+            # Add estimated completion time
+            if document.estimated_completion:
+                progress_data["progress"]["estimated_completion"] = document.estimated_completion.isoformat()
+                
+                # Calculate estimated remaining time
+                remaining_time = (document.estimated_completion - datetime.now()).total_seconds()
+                if remaining_time > 0:
+                    progress_data["progress"]["estimated_remaining_minutes"] = round(remaining_time / 60, 1)
+                else:
+                    progress_data["progress"]["estimated_remaining_minutes"] = 0
+            
+            # Add processing started time
+            if document.processing_started_at:
+                progress_data["progress"]["processing_started_at"] = document.processing_started_at.isoformat()
+                elapsed_seconds = (datetime.now() - document.processing_started_at).total_seconds()
+                progress_data["progress"]["elapsed_time_minutes"] = round(elapsed_seconds / 60, 1)
+            
+            response_data.update(progress_data)
+        
         return response_data
         
     except ValueError as e:
@@ -134,6 +179,49 @@ async def list_documents():
             
             if document.chunk_count is not None:
                 doc_data["chunk_count"] = document.chunk_count
+            
+            # Add progress information for video/audio processing
+            if document.file_type.value in ["video", "audio"] and document.status.value == "processing":
+                progress_data = {
+                    "progress": {
+                        "total_duration_seconds": document.total_duration,
+                        "processed_duration_seconds": document.processed_duration,
+                        "total_segments": document.total_segments,
+                        "processed_segments": document.processed_segments,
+                        "current_segment": document.current_segment
+                    }
+                }
+                
+                # Add formatted duration strings
+                if document.total_duration:
+                    progress_data["progress"]["total_duration_formatted"] = f"{document.total_duration/60:.1f} minutes"
+                
+                if document.processed_duration:
+                    progress_data["progress"]["processed_duration_formatted"] = f"{document.processed_duration/60:.1f} minutes"
+                
+                # Add percentage complete
+                if document.total_segments and document.processed_segments is not None:
+                    percentage = (document.processed_segments / document.total_segments) * 100
+                    progress_data["progress"]["percentage_complete"] = round(percentage, 1)
+                
+                # Add estimated completion time
+                if document.estimated_completion:
+                    progress_data["progress"]["estimated_completion"] = document.estimated_completion.isoformat()
+                    
+                    # Calculate estimated remaining time
+                    remaining_time = (document.estimated_completion - datetime.now()).total_seconds()
+                    if remaining_time > 0:
+                        progress_data["progress"]["estimated_remaining_minutes"] = round(remaining_time / 60, 1)
+                    else:
+                        progress_data["progress"]["estimated_remaining_minutes"] = 0
+                
+                # Add processing started time
+                if document.processing_started_at:
+                    progress_data["progress"]["processing_started_at"] = document.processing_started_at.isoformat()
+                    elapsed_seconds = (datetime.now() - document.processing_started_at).total_seconds()
+                    progress_data["progress"]["elapsed_time_minutes"] = round(elapsed_seconds / 60, 1)
+                
+                doc_data.update(progress_data)
                 
             document_list.append(doc_data)
         
