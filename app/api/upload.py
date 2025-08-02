@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.services.document_processor import document_processor
+from app.services.r2_storage import r2_storage_service
 from app.models.document import ProcessingStatus
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -47,25 +48,52 @@ async def upload_file(file: UploadFile = File(...)):
                 detail=f"File size {file.size} exceeds maximum allowed size of {settings.max_file_size} bytes"
             )
         
-        # Ensure upload directory exists
-        os.makedirs(settings.upload_path, exist_ok=True)
+        # Read file content
+        content = await file.read()
         
-        # Save file
-        file_path = os.path.join(settings.upload_path, file.filename)
+        if not content:
+            raise HTTPException(status_code=400, detail="File is empty")
         
-        # If file exists, add timestamp to make it unique
-        if os.path.exists(file_path):
-            name_part = Path(file.filename).stem
-            extension = Path(file.filename).suffix
-            timestamp = str(int(datetime.now().timestamp()))
-            file_path = os.path.join(settings.upload_path, f"{name_part}_{timestamp}{extension}")
+        # Generate unique document ID first
+        import uuid
+        document_id = str(uuid.uuid4())
         
-        async with aiofiles.open(file_path, 'wb') as f:
-            content = await file.read()
-            await f.write(content)
+        # Determine storage method
+        if settings.use_r2_storage:
+            # Upload to R2 storage
+            try:
+                r2_info = await r2_storage_service.upload_file(content, file.filename, document_id)
+                file_path = r2_info['object_key']  # Use R2 object key as file_path
+                storage_info = r2_info
+                storage_type = "r2"
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to upload to R2: {str(e)}")
+        else:
+            # Fallback to local storage
+            os.makedirs(settings.upload_path, exist_ok=True)
+            file_path = os.path.join(settings.upload_path, file.filename)
+            
+            # If file exists, add timestamp to make it unique
+            if os.path.exists(file_path):
+                name_part = Path(file.filename).stem
+                extension = Path(file.filename).suffix
+                timestamp = str(int(datetime.now().timestamp()))
+                file_path = os.path.join(settings.upload_path, f"{name_part}_{timestamp}{extension}")
+            
+            async with aiofiles.open(file_path, 'wb') as f:
+                await f.write(content)
+            
+            storage_info = {"file_path": file_path, "file_size": len(content)}
+            storage_type = "local"
         
         # Process document (now queues it)
-        document = await document_processor.process_document(file_path, file.filename)
+        document = await document_processor.process_document(
+            file_path, 
+            file.filename, 
+            document_id=document_id,
+            storage_info=storage_info,
+            storage_type=storage_type
+        )
         
         # Get queue information
         queue_status = document_processor.get_queue_status()
@@ -83,6 +111,8 @@ async def upload_file(file: UploadFile = File(...)):
             "file_type": document.file_type.value,
             "status": document.status.value,
             "created_at": document.created_at.isoformat(),
+            "storage_type": document.storage_type,
+            "file_size": document.file_size,
             "queue_info": {
                 "position_in_queue": position_in_queue,
                 "total_queue_size": queue_status["total_queue_size"],
@@ -127,7 +157,9 @@ async def get_processing_status(document_id: str):
             "filename": document.filename,
             "file_type": document.file_type.value,
             "status": document.status.value,
-            "created_at": document.created_at.isoformat()
+            "created_at": document.created_at.isoformat(),
+            "storage_type": document.storage_type,
+            "file_size": document.file_size
         }
         
         if document.processed_at:
@@ -203,7 +235,9 @@ async def list_documents():
                 "filename": document.filename,
                 "file_type": document.file_type.value,
                 "status": document.status.value,
-                "created_at": document.created_at.isoformat()
+                "created_at": document.created_at.isoformat(),
+                "storage_type": document.storage_type,
+                "file_size": document.file_size
             }
             
             if document.processed_at:

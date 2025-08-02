@@ -19,6 +19,10 @@ sentence-transformers
 openai
 httpx
 
+# Cloud storage
+boto3
+botocore
+
 # Utilities
 python-dotenv
 loguru

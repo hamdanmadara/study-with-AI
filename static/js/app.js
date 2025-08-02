@@ -3,7 +3,7 @@ console.log('Loading simple app version');
 
 let selectedDocument = null;
 
-// Simple file upload function
+// Simple file upload function with progress indication
 async function uploadFile(file) {
     console.log('Uploading file:', file.name);
     
@@ -11,34 +11,74 @@ async function uploadFile(file) {
         const formData = new FormData();
         formData.append('file', file);
 
-        // Show progress
-        showToast('Uploading file...', 'info');
+        // Show upload progress UI
+        showUploadProgress(true);
+        updateUploadProgress(0, `Uploading ${file.name}...`);
 
-        const response = await fetch('/api/upload/file', {
-            method: 'POST',
-            body: formData
+        // Create XMLHttpRequest to track upload progress
+        const xhr = new XMLHttpRequest();
+        
+        // Track upload progress
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                updateUploadProgress(percentComplete, `Uploading ${file.name}... ${Math.round(percentComplete)}%`);
+            }
         });
 
-        const result = await response.json();
+        // Handle upload completion
+        const uploadPromise = new Promise((resolve, reject) => {
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        const result = JSON.parse(xhr.responseText);
+                        resolve(result);
+                    } catch (e) {
+                        reject(new Error('Invalid response format'));
+                    }
+                } else {
+                    try {
+                        const error = JSON.parse(xhr.responseText);
+                        reject(new Error(error.detail || 'Upload failed'));
+                    } catch (e) {
+                        reject(new Error(`HTTP ${xhr.status}: Upload failed`));
+                    }
+                }
+            };
+            
+            xhr.onerror = () => reject(new Error('Network error during upload'));
+            xhr.ontimeout = () => reject(new Error('Upload timeout'));
+        });
 
-        if (response.ok) {
-            // Show queue-aware message with refresh instruction
-            let message = 'File uploaded and queued for processing! ';
-            if (result.queue_info && result.queue_info.estimated_wait_minutes > 0) {
-                message += `Estimated wait: ${result.queue_info.estimated_wait_minutes} minutes. `;
-            }
-            message += 'Refresh the page to check status.';
-            showToast(message, 'success');
-            
-            console.log('Upload successful:', result);
-            
-            // Refresh document list once to show the uploaded file
-            loadDocuments();
-            
-        } else {
-            throw new Error(result.detail || 'Upload failed');
+        // Start the upload
+        xhr.open('POST', '/api/upload/file');
+        xhr.timeout = 300000; // 5 minutes timeout
+        xhr.send(formData);
+
+        const result = await uploadPromise;
+
+        // Upload completed, now processing
+        updateUploadProgress(100, 'Upload complete! Processing file...');
+        
+        // Show queue-aware message with refresh instruction
+        let message = 'File uploaded and queued for processing! ';
+        if (result.queue_info && result.queue_info.estimated_wait_minutes > 0) {
+            message += `Estimated wait: ${result.queue_info.estimated_wait_minutes} minutes. `;
         }
+        message += 'Refresh the page to check status.';
+        
+        setTimeout(() => {
+            showUploadProgress(false);
+            showToast(message, 'success');
+        }, 1500);
+        
+        console.log('Upload successful:', result);
+        
+        // Refresh document list once to show the uploaded file
+        loadDocuments();
+        
     } catch (error) {
+        showUploadProgress(false);
         showToast(`Upload failed: ${error.message}`, 'error');
         console.error('Upload error:', error);
     }
@@ -520,6 +560,37 @@ function selectDocument(documentId) {
             console.error('Error selecting document:', error);
             showToast('Error selecting document', 'error');
         });
+}
+
+// Upload progress functions
+function showUploadProgress(show) {
+    const uploadProgress = document.getElementById('uploadProgress');
+    const uploadArea = document.getElementById('uploadArea');
+    
+    if (uploadProgress && uploadArea) {
+        if (show) {
+            uploadProgress.style.display = 'block';
+            uploadArea.style.opacity = '0.5';
+            uploadArea.style.pointerEvents = 'none';
+        } else {
+            uploadProgress.style.display = 'none';
+            uploadArea.style.opacity = '1';
+            uploadArea.style.pointerEvents = 'auto';
+        }
+    }
+}
+
+function updateUploadProgress(percentage, text) {
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    
+    if (progressFill) {
+        progressFill.style.width = `${Math.min(percentage, 100)}%`;
+    }
+    
+    if (progressText) {
+        progressText.textContent = text;
+    }
 }
 
 // Helper functions
