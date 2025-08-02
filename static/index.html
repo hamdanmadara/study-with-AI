@@ -37,7 +37,10 @@
 
             <!-- Documents List -->
             <section class="documents-section">
-                <h2>📄 Your Documents</h2>
+                <div class="documents-header">
+                    <h2>📄 Your Documents</h2>
+                    <button class="refresh-btn" id="refreshBtn" onclick="refreshDocuments()">🔄 Refresh</button>
+                </div>
                 <div class="documents-list" id="documentsList">
                     <p class="no-documents">No documents uploaded yet</p>
                 </div>

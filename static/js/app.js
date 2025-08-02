@@ -22,14 +22,18 @@ async function uploadFile(file) {
         const result = await response.json();
 
         if (response.ok) {
-            showToast('File uploaded successfully! Processing...', 'success');
+            // Show queue-aware message with refresh instruction
+            let message = 'File uploaded and queued for processing! ';
+            if (result.queue_info && result.queue_info.estimated_wait_minutes > 0) {
+                message += `Estimated wait: ${result.queue_info.estimated_wait_minutes} minutes. `;
+            }
+            message += 'Refresh the page to check status.';
+            showToast(message, 'success');
+            
             console.log('Upload successful:', result);
             
-            // Immediately refresh document list to show the uploaded file
+            // Refresh document list once to show the uploaded file
             loadDocuments();
-            
-            // Start checking status more frequently
-            checkDocumentStatus(result.document_id);
             
         } else {
             throw new Error(result.detail || 'Upload failed');
@@ -40,37 +44,6 @@ async function uploadFile(file) {
     }
 }
 
-// Check document processing status
-async function checkDocumentStatus(documentId) {
-    console.log('Checking status for:', documentId);
-    
-    try {
-        const response = await fetch(`/api/upload/status/${documentId}`);
-        const result = await response.json();
-        
-        console.log('Status:', result.status);
-        
-        if (result.status === 'completed') {
-            showToast('Document processed successfully!', 'success');
-            selectedDocument = result;
-            loadDocuments(); // Refresh document list
-            showFeatures();
-        } else if (result.status === 'failed') {
-            showToast(`Processing failed: ${result.error_message || 'Unknown error'}`, 'error');
-            loadDocuments(); // Refresh to show failed status
-        } else if (result.status === 'processing') {
-            showToast('🔄 Processing document... This may take a moment for videos', 'info');
-            loadDocuments(); // Refresh to show processing status
-            setTimeout(() => checkDocumentStatus(documentId), 2000); // Check every 2 seconds
-        } else {
-            showToast('📤 Document uploaded, starting processing...', 'info');
-            loadDocuments(); // Refresh document list
-            setTimeout(() => checkDocumentStatus(documentId), 1000); // Check quickly for pending
-        }
-    } catch (error) {
-        console.error('Status check error:', error);
-    }
-}
 
 // Show features section
 function showFeatures() {
@@ -403,6 +376,30 @@ function checkQuizAnswers() {
     document.querySelector('.quiz-actions').innerHTML = resultMessage;
 }
 
+// Refresh documents with user feedback
+async function refreshDocuments() {
+    console.log('Manually refreshing documents...');
+    
+    // Show refresh feedback
+    const refreshBtn = document.getElementById('refreshBtn');
+    const originalText = refreshBtn.innerHTML;
+    refreshBtn.innerHTML = '🔄 Refreshing...';
+    refreshBtn.disabled = true;
+    
+    try {
+        await loadDocuments();
+        showToast('Documents refreshed!', 'success');
+    } catch (error) {
+        showToast('Failed to refresh documents', 'error');
+    } finally {
+        // Restore button
+        setTimeout(() => {
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+        }, 500);
+    }
+}
+
 // Load and display documents
 async function loadDocuments() {
     console.log('Loading documents...');
@@ -424,14 +421,41 @@ async function loadDocuments() {
                 }[doc.status] || '📄';
                 
                 const statusText = {
-                    'pending': 'Pending',
-                    'processing': 'Processing...',
+                    'pending': 'Queued for processing - Refresh to check progress',
+                    'processing': 'Processing... - Refresh to check progress', 
                     'completed': 'Ready',
                     'failed': 'Failed'
                 }[doc.status] || 'Unknown';
                 
+                // Check if document is clickable (only completed documents)
+                const isClickable = doc.status === 'completed';
+                const clickHandler = isClickable ? `onclick="selectDocument('${doc.document_id}')"` : '';
+                const disabledClass = isClickable ? '' : 'disabled';
+                
+                // Add progress information for processing documents
+                let progressInfo = '';
+                if (doc.status === 'processing' && doc.progress) {
+                    const progress = doc.progress;
+                    if (progress.percentage_complete !== undefined) {
+                        progressInfo = `
+                            <div class="processing-progress">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${progress.percentage_complete}%"></div>
+                                </div>
+                                <div class="progress-text">
+                                    ${progress.percentage_complete}% complete 
+                                    ${progress.processed_segments ? `(${progress.processed_segments}/${progress.total_segments} segments)` : ''}
+                                </div>
+                                ${progress.estimated_remaining_minutes ? `
+                                    <div class="estimated-time">⏱️ ~${progress.estimated_remaining_minutes} minutes remaining</div>
+                                ` : ''}
+                            </div>
+                        `;
+                    }
+                }
+                
                 return `
-                    <div class="document-item ${doc.status}" onclick="selectDocument('${doc.document_id}')" data-id="${doc.document_id}">
+                    <div class="document-item ${doc.status} ${disabledClass}" ${clickHandler} data-id="${doc.document_id}">
                         <div class="document-info">
                             <div class="document-name">
                                 ${statusIcon} ${doc.filename}
@@ -439,7 +463,9 @@ async function loadDocuments() {
                             <div class="document-status">
                                 Status: ${statusText}
                                 ${doc.chunk_count ? ` • ${doc.chunk_count} chunks` : ''}
+                                ${!isClickable && doc.status !== 'failed' ? ' • Click disabled during processing' : ''}
                             </div>
+                            ${progressInfo}
                             <div class="document-date">
                                 ${new Date(doc.created_at).toLocaleString()}
                             </div>
@@ -459,6 +485,7 @@ async function loadDocuments() {
     }
 }
 
+
 function selectDocument(documentId) {
     console.log('Selecting document:', documentId);
     
@@ -476,8 +503,17 @@ function selectDocument(documentId) {
                     item.classList.remove('selected');
                 });
                 document.querySelector(`[data-id="${documentId}"]`).classList.add('selected');
-            } else {
-                showToast(`Document is ${result.status}. Please wait for processing to complete.`, 'info');
+            } else if (result.status === 'processing') {
+                let message = 'Document is still processing. ';
+                if (result.progress && result.progress.percentage_complete !== undefined) {
+                    message += `Progress: ${result.progress.percentage_complete}% complete. `;
+                }
+                message += 'Please refresh the page to check progress.';
+                showToast(message, 'info');
+            } else if (result.status === 'pending') {
+                showToast('Document is queued for processing. Please refresh the page to check progress.', 'info');
+            } else if (result.status === 'failed') {
+                showToast(`Document processing failed: ${result.error_message || 'Unknown error'}. You can try uploading again.`, 'error');
             }
         })
         .catch(error => {
@@ -532,7 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         console.log('Simple app ready!');
         loadDocuments(); // Load existing documents on startup
-        showToast('App ready! Upload PDF or video files to get started.', 'success');
+        showToast('App ready! Upload files and use the Refresh button to check processing status.', 'success');
     } else {
         console.error('Could not find upload elements');
     }

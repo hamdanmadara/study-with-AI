@@ -64,19 +64,40 @@ async def upload_file(file: UploadFile = File(...)):
             content = await file.read()
             await f.write(content)
         
-        # Process document
+        # Process document (now queues it)
         document = await document_processor.process_document(file_path, file.filename)
+        
+        # Get queue information
+        queue_status = document_processor.get_queue_status()
+        estimated_wait = document_processor.get_estimated_wait_time()
+        
+        response_data = {
+            "message": "File uploaded successfully and queued for processing",
+            "document_id": document.id,
+            "filename": document.filename,
+            "file_type": document.file_type.value,
+            "status": document.status.value,
+            "created_at": document.created_at.isoformat(),
+            "queue_info": {
+                "position_in_queue": queue_status["queue_size"],
+                "active_workers": queue_status["active_workers"],
+                "estimated_wait_minutes": estimated_wait,
+                "processing_message": "Your file is in the processing queue. You can refresh this page in a few minutes to check progress."
+            }
+        }
+        
+        # Add specific messages based on file type and queue status
+        if document.file_type.value in ["video", "audio"]:
+            if estimated_wait and estimated_wait > 0:
+                response_data["queue_info"]["processing_message"] = f"Your {document.file_type.value} file is queued for processing. Estimated wait time: {estimated_wait} minutes. You can refresh this page to check progress."
+            else:
+                response_data["queue_info"]["processing_message"] = f"Your {document.file_type.value} file is being processed now. This may take several minutes depending on file length. You can refresh this page to check progress."
+        else:
+            response_data["queue_info"]["processing_message"] = "Your PDF file is queued for processing. You can refresh this page in a few minutes to check progress."
         
         return JSONResponse(
             status_code=202,
-            content={
-                "message": "File uploaded successfully and processing started",
-                "document_id": document.id,
-                "filename": document.filename,
-                "file_type": document.file_type.value,
-                "status": document.status.value,
-                "created_at": document.created_at.isoformat()
-            }
+            content=response_data
         )
         
     except HTTPException:
@@ -250,3 +271,43 @@ async def delete_document(document_id: str):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
+@router.get("/queue/status")
+async def get_queue_status():
+    """Get current processing queue status"""
+    try:
+        queue_status = document_processor.get_queue_status()
+        estimated_wait = document_processor.get_estimated_wait_time()
+        
+        return {
+            "queue_status": queue_status,
+            "estimated_wait_minutes": estimated_wait,
+            "message": "Queue status retrieved successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get queue status: {str(e)}")
+
+@router.get("/queue/wait-time")
+async def get_estimated_wait_time():
+    """Get estimated wait time for new uploads"""
+    try:
+        estimated_wait = document_processor.get_estimated_wait_time()
+        queue_status = document_processor.get_queue_status()
+        
+        if estimated_wait is None:
+            message = "Queue system is starting up"
+        elif estimated_wait == 0:
+            message = "Your file will be processed immediately"
+        else:
+            message = f"Estimated wait time: {estimated_wait} minutes"
+        
+        return {
+            "estimated_wait_minutes": estimated_wait,
+            "queue_size": queue_status["queue_size"],
+            "active_workers": queue_status["active_workers"],
+            "message": message
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get wait time: {str(e)}")

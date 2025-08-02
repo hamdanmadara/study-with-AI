@@ -10,14 +10,22 @@ from loguru import logger
 from app.models.document import Document, DocumentType, ProcessingStatus
 from app.services.text_extraction import text_extraction_service
 from app.services.vector_store import vector_store_service
+from app.services.queue_service import queue_service
 from app.core.config import settings
 
 class DocumentProcessor:
     def __init__(self):
         self.processing_documents = {}
+        self._queue_initialized = False
+    
+    async def _ensure_queue_started(self):
+        """Ensure queue workers are started"""
+        if not self._queue_initialized:
+            await queue_service.start_workers()
+            self._queue_initialized = True
     
     async def process_document(self, file_path: str, filename: str) -> Document:
-        """Process uploaded document and store in vector database"""
+        """Queue uploaded document for processing"""
         document_id = str(uuid.uuid4())
         
         # Determine file type
@@ -44,8 +52,13 @@ class DocumentProcessor:
         # Store in processing cache
         self.processing_documents[document_id] = document
         
-        # Start processing asynchronously
-        asyncio.create_task(self._process_document_async(document))
+        # Ensure queue is started
+        await self._ensure_queue_started()
+        
+        # Add to queue instead of processing immediately
+        await queue_service.add_document_to_queue(document, self._process_document_async)
+        
+        logger.info(f"Document {document_id} ({filename}) queued for processing")
         
         return document
     
@@ -142,6 +155,14 @@ class DocumentProcessor:
     def get_all_documents(self) -> Dict[str, Document]:
         """Get all processed documents"""
         return self.processing_documents.copy()
+    
+    def get_queue_status(self):
+        """Get current queue status"""
+        return queue_service.get_queue_status()
+    
+    def get_estimated_wait_time(self):
+        """Get estimated wait time for new uploads"""
+        return queue_service.get_estimated_wait_time()
     
     async def delete_document(self, document_id: str):
         """Delete document and its data"""

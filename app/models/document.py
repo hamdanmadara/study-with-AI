@@ -23,6 +23,7 @@ class Document(BaseModel):
     text_content: Optional[str] = None
     chunk_count: Optional[int] = None
     created_at: datetime
+    queued_at: Optional[datetime] = None
     processed_at: Optional[datetime] = None
     error_message: Optional[str] = None
     
