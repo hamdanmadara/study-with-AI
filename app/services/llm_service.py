@@ -106,18 +106,18 @@ class LLMService:
             }
     
     async def generate_summary(self, document_id: str, max_length: int = 500) -> Dict[str, Any]:
-        """Generate a summary of the document"""
+        """Generate a summary of the document using ALL content with optimization"""
         try:
             # Get all document chunks
             chunks = await vector_store_service.get_document_chunks(document_id)
             
             if not chunks:
                 logger.warning(f"No chunks found for document {document_id}, using search fallback")
-                # Try using search as fallback - reduced for speed
+                # Try using search as fallback
                 search_results = await vector_store_service.search_similar(
                     query="summary content overview",
                     document_id=document_id,
-                    n_results=6  # Reduced from 10 to 6
+                    n_results=10
                 )
                 if search_results:
                     chunks = search_results
@@ -128,70 +128,40 @@ class LLMService:
                         "chunks_used": 0
                     }
             
-            # Combine chunks to get full text (with reasonable limit)
+            # ALWAYS use ALL chunks for complete coverage
             full_text = " ".join([chunk['document'] for chunk in chunks])
+            total_chunks = len(chunks)
             
-            # Optimize text length based on requested summary length
-            max_chars = max_length * 8  # Roughly 8 chars per word as estimate
+            logger.info(f"Processing summary for {total_chunks} chunks, {len(full_text)} characters, target: {max_length} words")
             
-            if len(full_text) > max_chars:
-                # Use strategic chunk selection based on summary requirements
-                selected_chunks = []
-                chunk_count = len(chunks)
+            # Determine if we need hierarchical summarization based on content size
+            estimated_tokens = len(full_text) // 4  # Rough estimate: 4 chars per token
+            max_context_tokens = 32000  # Conservative limit for DeepSeek
+            
+            if estimated_tokens > max_context_tokens:
+                # Use hierarchical summarization for very large documents
+                logger.info(f"Using hierarchical summarization: {estimated_tokens} tokens > {max_context_tokens}")
+                summary = await self._hierarchical_summarization(chunks, max_length)
+                word_count = len(summary.split())
                 
-                # For longer summaries, use more chunks
-                if max_length > 600:  # Long summary
-                    chunks_to_take = min(8, chunk_count)
-                elif max_length > 300:  # Medium summary  
-                    chunks_to_take = min(5, chunk_count)
-                else:  # Short summary
-                    chunks_to_take = min(3, chunk_count)
-                
-                # Distribute chunks across document
-                if chunks_to_take >= chunk_count:
-                    selected_chunks = chunks
-                else:
-                    step = max(1, chunk_count // chunks_to_take)
-                    for i in range(0, chunk_count, step):
-                        if len(selected_chunks) < chunks_to_take:
-                            selected_chunks.append(chunks[i])
-                
-                text_for_summary = " ".join([chunk['document'] for chunk in selected_chunks])
-                
-                # Only truncate if still way too long
-                if len(text_for_summary) > max_chars * 2:
-                    text_for_summary = text_for_summary[:max_chars * 2] + "..."
+                return {
+                    "summary": summary,
+                    "word_count": word_count,
+                    "chunks_used": total_chunks,
+                    "method": "hierarchical"
+                }
             else:
-                text_for_summary = full_text
-            
-            # Create summary prompt
-            prompt = self._create_summary_prompt(text_for_summary, max_length)
-            
-            # Create intelligent summary system prompt
-            summary_system_prompt = self._create_intelligent_summary_prompt()
-            
-            # Get response from LLM with longer timeout for summaries
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=settings.deepseek_model,
-                    messages=[
-                        {"role": "system", "content": summary_system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.2,
-                    max_tokens=max_length * 2  # Use user's requested length
-                ),
-                timeout=60.0  # Increased timeout for summaries
-            )
-            
-            summary = response.choices[0].message.content
-            word_count = len(summary.split())
-            
-            return {
-                "summary": summary,
-                "word_count": word_count,
-                "chunks_used": len(chunks)
-            }
+                # Use direct summarization for manageable documents
+                logger.info(f"Using direct summarization: {estimated_tokens} tokens <= {max_context_tokens}")
+                summary = await self._direct_summarization(full_text, max_length)
+                word_count = len(summary.split())
+                
+                return {
+                    "summary": summary,
+                    "word_count": word_count,
+                    "chunks_used": total_chunks,
+                    "method": "direct"
+                }
             
         except asyncio.TimeoutError:
             logger.error("Summary generation timed out")
@@ -222,20 +192,190 @@ class LLMService:
                 "chunks_used": 0
             }
     
+    async def _direct_summarization(self, full_text: str, max_length: int) -> str:
+        """Direct summarization for manageable documents"""
+        prompt = self._create_summary_prompt(full_text, max_length)
+        summary_system_prompt = self._create_intelligent_summary_prompt()
+        
+        response = await asyncio.wait_for(
+            self.client.chat.completions.create(
+                model=settings.deepseek_model,
+                messages=[
+                    {"role": "system", "content": summary_system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                max_tokens=max(max_length * 4, 2000)
+            ),
+            timeout=90.0  # Increased timeout for large direct summaries
+        )
+        
+        return response.choices[0].message.content
+    
+    async def _hierarchical_summarization(self, chunks: List[Dict], max_length: int) -> str:
+        """Hierarchical summarization for very large documents"""
+        logger.info(f"Starting hierarchical summarization with {len(chunks)} chunks")
+        
+        # Step 1: Group chunks into manageable batches
+        batch_size = 8  # Process 8 chunks at a time
+        chunk_batches = [chunks[i:i + batch_size] for i in range(0, len(chunks), batch_size)]
+        
+        # Step 2: Create intermediate summaries for each batch
+        intermediate_summaries = []
+        words_per_batch = max(100, max_length // len(chunk_batches))  # Distribute target words
+        
+        for i, batch in enumerate(chunk_batches):
+            logger.info(f"Processing batch {i+1}/{len(chunk_batches)} with {len(batch)} chunks")
+            
+            batch_text = " ".join([chunk['document'] for chunk in batch])
+            
+            # Create focused prompt for intermediate summary
+            batch_prompt = f"""Summarize the following content in approximately {words_per_batch} words. Focus on the key points, main concepts, and important details:
+
+{batch_text}
+
+Create a comprehensive summary that captures all important information from this section."""
+            
+            try:
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=settings.deepseek_model,
+                        messages=[
+                            {"role": "system", "content": "You are an expert summarizer. Create clear, informative summaries that preserve all key information."},
+                            {"role": "user", "content": batch_prompt}
+                        ],
+                        temperature=0.2,
+                        max_tokens=words_per_batch * 3
+                    ),
+                    timeout=60.0
+                )
+                
+                batch_summary = response.choices[0].message.content
+                intermediate_summaries.append(batch_summary)
+                logger.info(f"Batch {i+1} summary: {len(batch_summary.split())} words")
+                
+            except Exception as e:
+                logger.error(f"Error in batch {i+1} summarization: {e}")
+                # Fallback: use first part of batch text
+                fallback_summary = batch_text[:words_per_batch * 6] + "..."
+                intermediate_summaries.append(fallback_summary)
+        
+        # Step 3: Combine intermediate summaries into final summary
+        combined_intermediate = "\n\n".join(intermediate_summaries)
+        
+        final_prompt = f"""Create a comprehensive final summary of exactly {max_length} words from the following intermediate summaries. Each summary represents a different section of the complete document:
+
+{combined_intermediate}
+
+IMPORTANT: Create a cohesive, well-structured summary of exactly {max_length} words that covers all sections and maintains the document's full scope and key insights."""
+        
+        response = await asyncio.wait_for(
+            self.client.chat.completions.create(
+                model=settings.deepseek_model,
+                messages=[
+                    {"role": "system", "content": self._create_intelligent_summary_prompt()},
+                    {"role": "user", "content": final_prompt}
+                ],
+                temperature=0.2,
+                max_tokens=max(max_length * 4, 2000)
+            ),
+            timeout=90.0
+        )
+        
+        final_summary = response.choices[0].message.content
+        logger.info(f"Final hierarchical summary: {len(final_summary.split())} words")
+        
+        return final_summary
+    
+    async def _direct_quiz_generation(self, full_text: str, num_questions: int, difficulty: str) -> List[Dict]:
+        """Direct quiz generation for manageable documents"""
+        prompt = self._create_quiz_prompt(full_text, num_questions, difficulty)
+        quiz_system_prompt = self._create_quiz_system_prompt(num_questions, difficulty)
+        
+        response = await asyncio.wait_for(
+            self.client.chat.completions.create(
+                model=settings.deepseek_model,
+                messages=[
+                    {"role": "system", "content": quiz_system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=num_questions * 250  # Generous tokens per question
+            ),
+            timeout=90.0
+        )
+        
+        quiz_content = response.choices[0].message.content
+        quiz_json = self._extract_json_from_response(quiz_content)
+        
+        if not quiz_json or 'questions' not in quiz_json:
+            raise ValueError("Invalid quiz format received from LLM")
+        
+        # Validate and format questions
+        formatted_questions = []
+        for q in quiz_json['questions'][:num_questions]:
+            if self._validate_quiz_question(q):
+                formatted_questions.append({
+                    "question": q['question'],
+                    "options": q['options'],
+                    "correct_answer": q['correct_answer']
+                })
+        
+        return formatted_questions
+    
+    async def _hierarchical_quiz_generation(self, chunks: List[Dict], num_questions: int, difficulty: str) -> List[Dict]:
+        """Hierarchical quiz generation for very large documents"""
+        logger.info(f"Starting hierarchical quiz generation with {len(chunks)} chunks")
+        
+        # Step 1: Group chunks into manageable batches
+        batch_size = 10  # Process 10 chunks at a time for quiz
+        chunk_batches = [chunks[i:i + batch_size] for i in range(0, len(chunks), batch_size)]
+        
+        # Step 2: Generate questions from each batch
+        all_questions = []
+        questions_per_batch = max(2, num_questions // len(chunk_batches))  # Distribute questions
+        
+        for i, batch in enumerate(chunk_batches):
+            logger.info(f"Processing quiz batch {i+1}/{len(chunk_batches)} with {len(batch)} chunks")
+            
+            batch_text = " ".join([chunk['document'] for chunk in batch])
+            
+            try:
+                batch_questions = await self._direct_quiz_generation(batch_text, questions_per_batch, difficulty)
+                all_questions.extend(batch_questions)
+                logger.info(f"Batch {i+1} generated {len(batch_questions)} questions")
+                
+            except Exception as e:
+                logger.error(f"Error in batch {i+1} quiz generation: {e}")
+                continue
+        
+        # Step 3: Select best questions if we have too many
+        if len(all_questions) > num_questions:
+            # Distribute selection across batches for coverage
+            step = len(all_questions) / num_questions
+            selected_questions = []
+            for i in range(num_questions):
+                index = int(i * step)
+                if index < len(all_questions):
+                    selected_questions.append(all_questions[index])
+            return selected_questions
+        
+        return all_questions[:num_questions]
+    
     async def generate_quiz(self, document_id: str, num_questions: int = 5, 
                           difficulty: str = "medium") -> Dict[str, Any]:
-        """Generate a multiple-choice quiz from the document"""
+        """Generate a multiple-choice quiz from ALL document content with optimization"""
         try:
-            # Get document chunks
+            # Get ALL document chunks
             chunks = await vector_store_service.get_document_chunks(document_id)
             
             if not chunks:
                 logger.warning(f"No chunks found for document {document_id}, using search fallback")
-                # Try using search as fallback - reduced for speed
+                # Try using search as fallback
                 search_results = await vector_store_service.search_similar(
                     query="quiz questions content overview",
                     document_id=document_id,
-                    n_results=5  # Reduced from 10 to 5
+                    n_results=10
                 )
                 if search_results:
                     chunks = search_results
@@ -246,60 +386,30 @@ class LLMService:
                         "total_questions": 0
                     }
             
-            # Use entire document for quiz generation (optimized)
+            # ALWAYS use ALL chunks for complete coverage
             full_text = " ".join([chunk['document'] for chunk in chunks])
+            total_chunks = len(chunks)
             
-            # Optimize for large documents but keep all content
-            if len(full_text) > 15000:  # If very large, summarize content first
-                # Create condensed version while keeping all key information
-                text_for_quiz = self._optimize_text_for_quiz(full_text)
+            logger.info(f"Processing quiz for {total_chunks} chunks, {len(full_text)} characters, target: {num_questions} questions")
+            
+            # Determine if we need hierarchical processing based on content size
+            estimated_tokens = len(full_text) // 4  # Rough estimate: 4 chars per token
+            max_context_tokens = 32000  # Conservative limit for DeepSeek
+            
+            if estimated_tokens > max_context_tokens:
+                # Use hierarchical quiz generation for very large documents
+                logger.info(f"Using hierarchical quiz generation: {estimated_tokens} tokens > {max_context_tokens}")
+                questions = await self._hierarchical_quiz_generation(chunks, num_questions, difficulty)
             else:
-                text_for_quiz = full_text
-            
-            # Create quiz prompt
-            prompt = self._create_quiz_prompt(text_for_quiz, num_questions, difficulty)
-            
-            # Create enhanced quiz system prompt
-            quiz_system_prompt = self._create_quiz_system_prompt(num_questions, difficulty)
-            
-            # Get response from LLM
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=settings.deepseek_model,
-                    messages=[
-                        {"role": "system", "content": quiz_system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=num_questions * 200  # Dynamic based on question count
-                ),
-                timeout=60.0  # Increased timeout for quiz generation
-            )
-            
-            # Parse the response
-            quiz_content = response.choices[0].message.content
-            
-            # Try to extract JSON from the response
-            quiz_json = self._extract_json_from_response(quiz_content)
-            
-            if not quiz_json or 'questions' not in quiz_json:
-                raise ValueError("Invalid quiz format received from LLM")
-            
-            # Validate and format questions
-            formatted_questions = []
-            for q in quiz_json['questions'][:num_questions]:
-                if self._validate_quiz_question(q):
-                    formatted_questions.append({
-                        "question": q['question'],
-                        "options": q['options'],
-                        "correct_answer": q['correct_answer']
-                    })
+                # Use direct quiz generation for manageable documents
+                logger.info(f"Using direct quiz generation: {estimated_tokens} tokens <= {max_context_tokens}")
+                questions = await self._direct_quiz_generation(full_text, num_questions, difficulty)
             
             return {
-                "questions": formatted_questions,
-                "total_questions": len(formatted_questions),
+                "questions": questions,
+                "total_questions": len(questions),
                 "difficulty": difficulty,
-                "chunks_used": len(chunks)
+                "chunks_used": total_chunks
             }
             
         except asyncio.TimeoutError:
@@ -505,28 +615,33 @@ Answer the question following the style and format guidelines provided in the sy
         """Create intelligent summary system prompt"""
         return """You are an expert at creating well-structured, informative summaries. Write naturally like a human would summarize content for another person.
 
+CRITICAL REQUIREMENT:
+You must meet the exact word count specified by the user. This is non-negotiable. If they request 800 words, write exactly around 800 words. If they request 300 words, write around 300 words. Expand or condense your content as needed to meet the requested length.
+
 SUMMARY STYLE:
 Write conversationally and organize information clearly. Avoid technical formatting symbols and write like you're explaining to a colleague.
 
 INTELLIGENT STRUCTURE:
-Choose the best organization based on content:
+Choose the best organization based on content AND word count requirement:
 
-- For short summaries: Brief overview followed by main points
-- For medium summaries: Overview, key points, and conclusion
-- For long summaries: Break into natural sections with clear headings
+- For short summaries (300 words): Brief overview followed by main points
+- For medium summaries (500 words): Overview, key points, and conclusion with examples
+- For long summaries (800+ words): Break into natural sections with detailed explanations, examples, and comprehensive coverage
+
+WORD COUNT STRATEGIES:
+- For longer summaries: Include more details, examples, explanations, context, and background information
+- For shorter summaries: Focus on essential points and be more concise
+- Always check your response length against the requirement
 
 FORMATTING EXAMPLES:
 
-Question: "Summarize this technical document"
-Good Summary:
-This document covers the basics of machine learning and its applications. The main topics include:
-
-- Supervised learning uses labeled data to train models for prediction tasks
-- Unsupervised learning finds patterns in data without predefined outcomes  
-- Deep learning employs neural networks to handle complex data like images and text
-- Common applications range from recommendation systems to autonomous vehicles
-
-The document emphasizes that choosing the right approach depends on your data type and business goals.
+Question: "Summarize this technical document in 800 words"
+Good Strategy: Create comprehensive coverage with:
+- Detailed introduction and background
+- Multiple main sections with explanations
+- Specific examples and use cases
+- Implementation details where relevant
+- Thorough conclusion with implications
 
 WRITING GUIDELINES:
 - Write naturally, like explaining to a friend
@@ -534,7 +649,8 @@ WRITING GUIDELINES:
 - Break content into readable paragraphs  
 - Use clear section breaks when needed
 - No markdown formatting (**, ###, etc.)
-- Focus on what matters most
+- MOST IMPORTANT: Meet the exact word count requested
+- Expand with relevant details for longer summaries
 - Make it easy to scan and understand"""
     
     def _create_summary_prompt(self, text: str, max_length: int) -> str:
@@ -544,7 +660,9 @@ WRITING GUIDELINES:
 Text to summarize:
 {text}
 
-Create a well-structured summary that captures the essential information in approximately {max_length} words."""
+IMPORTANT: Create a comprehensive summary of exactly {max_length} words. This is a strict requirement - the user has specifically requested {max_length} words, so please ensure your response reaches this length while maintaining quality and relevance. Cover all important aspects of the content to justify the requested length.
+
+Target word count: {max_length} words (this must be met)"""
     
     def _create_quiz_system_prompt(self, num_questions: int, difficulty: str) -> str:
         """Create enhanced system prompt for quiz generation"""
