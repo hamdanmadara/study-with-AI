@@ -2,18 +2,37 @@
 console.log('Loading simple app version');
 
 let selectedDocument = null;
+let uploadQueue = []; // Track all uploads
+let uploadCounter = 0; // Unique ID for each upload
 
-// Simple file upload function with progress indication
+// Simple file upload function with queue tracking
 async function uploadFile(file) {
     console.log('Uploading file:', file.name);
+    
+    // Create upload item and add to queue
+    const uploadId = ++uploadCounter;
+    const uploadItem = {
+        id: uploadId,
+        filename: file.name,
+        size: file.size,
+        status: 'uploading',
+        progress: 0,
+        startTime: new Date(),
+        error: null,
+        result: null
+    };
+    
+    // Add to queue and show queue UI
+    uploadQueue.push(uploadItem);
+    showUploadQueue(true);
+    addUploadItemToUI(uploadItem);
     
     try {
         const formData = new FormData();
         formData.append('file', file);
 
-        // Show upload progress UI
-        showUploadProgress(true);
-        updateUploadProgress(0, `Uploading ${file.name}...`);
+        // Update upload item status
+        updateUploadItemStatus(uploadId, 'uploading', 0, 'Starting upload...');
 
         // Create XMLHttpRequest to track upload progress
         const xhr = new XMLHttpRequest();
@@ -21,8 +40,18 @@ async function uploadFile(file) {
         // Track upload progress
         xhr.upload.addEventListener('progress', (e) => {
             if (e.lengthComputable) {
-                const percentComplete = (e.loaded / e.total) * 100;
-                updateUploadProgress(percentComplete, `Uploading ${file.name}... ${Math.round(percentComplete)}%`);
+                const actualProgress = (e.loaded / e.total) * 100;
+                // Cap progress at 98% to show we're waiting for server response
+                const displayProgress = Math.min(actualProgress, 98);
+                
+                let progressMessage;
+                if (displayProgress >= 98) {
+                    progressMessage = 'Finalizing upload...';
+                } else {
+                    progressMessage = `Uploading... ${Math.round(displayProgress)}%`;
+                }
+                
+                updateUploadItemStatus(uploadId, 'uploading', displayProgress, progressMessage);
             }
         });
 
@@ -57,28 +86,36 @@ async function uploadFile(file) {
 
         const result = await uploadPromise;
 
-        // Upload completed, now processing
-        updateUploadProgress(100, 'Upload complete! Processing file...');
+        // First show we're processing the response
+        updateUploadItemStatus(uploadId, 'uploading', 99, 'Processing server response...');
         
-        // Show queue-aware message with refresh instruction
-        let message = 'File uploaded and queued for processing! ';
+        // Small delay to show the processing state
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Now show completed
+        updateUploadItemStatus(uploadId, 'completed', 100, 'Upload completed! Processing...');
+        
+        // Store result in upload item
+        uploadItem.result = result;
+        
+        // Show success toast
+        let message = 'File uploaded successfully and queued for processing! ';
         if (result.queue_info && result.queue_info.estimated_wait_minutes > 0) {
             message += `Estimated wait: ${result.queue_info.estimated_wait_minutes} minutes. `;
         }
         message += 'Refresh the page to check status.';
-        
-        setTimeout(() => {
-            showUploadProgress(false);
-            showToast(message, 'success');
-        }, 1500);
+        showToast(message, 'success');
         
         console.log('Upload successful:', result);
         
-        // Refresh document list once to show the uploaded file
+        // Refresh document list to show the uploaded file
         loadDocuments();
         
     } catch (error) {
-        showUploadProgress(false);
+        // Upload failed
+        updateUploadItemStatus(uploadId, 'failed', 0, `Failed: ${error.message}`);
+        uploadItem.error = error.message;
+        
         showToast(`Upload failed: ${error.message}`, 'error');
         console.error('Upload error:', error);
     }
@@ -562,20 +599,161 @@ function selectDocument(documentId) {
         });
 }
 
+// Upload queue management functions
+function showUploadQueue(show) {
+    const uploadQueueSection = document.getElementById('uploadQueueSection');
+    if (uploadQueueSection) {
+        uploadQueueSection.style.display = show ? 'block' : 'none';
+    }
+}
+
+function addUploadItemToUI(uploadItem) {
+    const uploadQueueList = document.getElementById('uploadQueueList');
+    if (!uploadQueueList) return;
+    
+    const uploadItemDiv = document.createElement('div');
+    uploadItemDiv.className = 'upload-item';
+    uploadItemDiv.id = `upload-${uploadItem.id}`;
+    
+    const fileSize = formatFileSize(uploadItem.size);
+    
+    uploadItemDiv.innerHTML = `
+        <div class="upload-item-header">
+            <div class="upload-item-info">
+                <div class="upload-filename">📎 ${uploadItem.filename}</div>
+                <div class="upload-filesize">${fileSize}</div>
+            </div>
+            <div class="upload-status" id="status-${uploadItem.id}">
+                <span class="status-icon">⏳</span>
+                <span class="status-text">Preparing...</span>
+            </div>
+        </div>
+        <div class="upload-item-progress">
+            <div class="upload-progress-bar">
+                <div class="upload-progress-fill" id="progress-${uploadItem.id}" style="width: 0%"></div>
+            </div>
+            <div class="upload-progress-text" id="progress-text-${uploadItem.id}">0%</div>
+        </div>
+        <div class="upload-item-actions" style="display: none;">
+            <button class="remove-upload-btn" onclick="removeUploadItem(${uploadItem.id})">✕ Remove</button>
+        </div>
+    `;
+    
+    uploadQueueList.appendChild(uploadItemDiv);
+}
+
+function updateUploadItemStatus(uploadId, status, progress, message) {
+    const statusElement = document.getElementById(`status-${uploadId}`);
+    const progressFill = document.getElementById(`progress-${uploadId}`);
+    const progressText = document.getElementById(`progress-text-${uploadId}`);
+    const uploadItem = document.getElementById(`upload-${uploadId}`);
+    
+    if (statusElement) {
+        const statusIcon = statusElement.querySelector('.status-icon');
+        const statusText = statusElement.querySelector('.status-text');
+        
+        // Update status icon and text based on status
+        switch (status) {
+            case 'uploading':
+                statusIcon.textContent = '🔄';
+                statusText.textContent = 'Uploading';
+                uploadItem.className = 'upload-item uploading';
+                break;
+            case 'completed':
+                statusIcon.textContent = '✅';
+                statusText.textContent = 'Completed';
+                uploadItem.className = 'upload-item completed';
+                // Show remove button after completion
+                const actions = uploadItem.querySelector('.upload-item-actions');
+                if (actions) actions.style.display = 'block';
+                break;
+            case 'failed':
+                statusIcon.textContent = '❌';
+                statusText.textContent = 'Failed';
+                uploadItem.className = 'upload-item failed';
+                // Show remove button after failure
+                const failActions = uploadItem.querySelector('.upload-item-actions');
+                if (failActions) failActions.style.display = 'block';
+                break;
+        }
+    }
+    
+    if (progressFill) {
+        progressFill.style.width = `${Math.min(progress, 100)}%`;
+    }
+    
+    if (progressText) {
+        progressText.textContent = message || `${Math.round(progress)}%`;
+    }
+    
+    // Update the uploadQueue array
+    const queueItem = uploadQueue.find(item => item.id === uploadId);
+    if (queueItem) {
+        queueItem.status = status;
+        queueItem.progress = progress;
+    }
+}
+
+function removeUploadItem(uploadId) {
+    const uploadItem = document.getElementById(`upload-${uploadId}`);
+    if (uploadItem) {
+        uploadItem.remove();
+    }
+    
+    // Remove from queue array
+    uploadQueue = uploadQueue.filter(item => item.id !== uploadId);
+    
+    // Hide queue section if no items left
+    if (uploadQueue.length === 0) {
+        showUploadQueue(false);
+    }
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
 // Upload progress functions
 function showUploadProgress(show) {
     const uploadProgress = document.getElementById('uploadProgress');
     const uploadArea = document.getElementById('uploadArea');
+    const uploadBtn = document.getElementById('uploadBtn');
     
     if (uploadProgress && uploadArea) {
         if (show) {
+            // Show progress bar
             uploadProgress.style.display = 'block';
-            uploadArea.style.opacity = '0.5';
+            
+            // Dim upload area and disable interactions
+            uploadArea.style.opacity = '0.6';
             uploadArea.style.pointerEvents = 'none';
+            
+            // Disable upload button and change text
+            if (uploadBtn) {
+                uploadBtn.disabled = true;
+                uploadBtn.textContent = 'Uploading...';
+                uploadBtn.style.background = '#94a3b8';
+                uploadBtn.style.cursor = 'not-allowed';
+            }
         } else {
+            // Hide progress bar
             uploadProgress.style.display = 'none';
+            
+            // Restore upload area
             uploadArea.style.opacity = '1';
             uploadArea.style.pointerEvents = 'auto';
+            
+            // Re-enable upload button
+            if (uploadBtn) {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Choose Files';
+                uploadBtn.style.background = '';
+                uploadBtn.style.cursor = 'pointer';
+            }
         }
     }
 }
@@ -632,8 +810,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
-                console.log('File selected:', e.target.files[0].name);
-                uploadFile(e.target.files[0]);
+                console.log('Files selected:', e.target.files.length);
+                
+                // Upload each file separately
+                Array.from(e.target.files).forEach(file => {
+                    console.log('Uploading file:', file.name);
+                    uploadFile(file);
+                });
+                
+                // Clear the input so the same files can be selected again if needed
+                e.target.value = '';
             }
         });
         

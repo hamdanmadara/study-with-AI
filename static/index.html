@@ -20,10 +20,10 @@
                 <div class="upload-area" id="uploadArea">
                     <div class="upload-content">
                         <div class="upload-icon">📎</div>
-                        <p>Drag & drop your file here or click to browse</p>
-                        <p class="upload-info">Supported: PDF, MP4, AVI, MOV, MKV, WEBM, MP3, WAV, M4A, AAC, FLAC (Max 100MB)</p>
-                        <input type="file" id="fileInput" accept=".pdf,.mp3,.wav,.m4a,.aac,.flac,.mp4,.avi,.mov,.mkv,.webm,video/*,audio/*" hidden>
-                        <button class="upload-btn" id="uploadBtn">Choose File</button>
+                        <p>Drag & drop your files here or click to browse</p>
+                        <p class="upload-info">Supported: PDF, MP4, AVI, MOV, MKV, WEBM, MP3, WAV, M4A, AAC, FLAC (Max 100MB each)</p>
+                        <input type="file" id="fileInput" accept=".pdf,.mp3,.wav,.m4a,.aac,.flac,.mp4,.avi,.mov,.mkv,.webm,video/*,audio/*" multiple hidden>
+                        <button class="upload-btn" id="uploadBtn">Choose Files</button>
                     </div>
                 </div>
                 
@@ -32,6 +32,14 @@
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
                     <p id="progressText">Processing...</p>
+                </div>
+            </section>
+
+            <!-- Upload Queue Section -->
+            <section class="upload-queue-section" id="uploadQueueSection" style="display: none;">
+                <h2>📤 Upload Queue</h2>
+                <div class="upload-queue-list" id="uploadQueueList">
+                    <!-- Upload items will be added here dynamically -->
                 </div>
             </section>
 
