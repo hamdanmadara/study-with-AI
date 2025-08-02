@@ -126,6 +126,9 @@ class TextExtractionService:
         try:
             logger.info(f"Starting video processing for: {file_path}")
             
+            # Pre-validate video file
+            await self._validate_video_file(file_path)
+            
             # Get video duration first - this is critical for segmentation
             try:
                 video_duration = await self._get_video_duration(file_path)
@@ -350,18 +353,72 @@ class TextExtractionService:
                 '-acodec', 'pcm_s16le',  # PCM audio codec
                 '-ar', '16000',  # 16kHz sample rate
                 '-ac', '1',  # Mono channel
+                '-af', 'volume=1.0',  # Ensure audio is processed
                 output_path
             ]
             
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._run_ffmpeg_command, cmd)
             
-            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                raise ValueError("FFmpeg failed to extract audio segment")
+            # Validate extracted audio file
+            if not os.path.exists(output_path):
+                raise ValueError("FFmpeg failed to create audio segment file")
+            
+            file_size = os.path.getsize(output_path)
+            if file_size == 0:
+                raise ValueError("FFmpeg created empty audio segment file")
+            
+            if file_size < 1024:  # Less than 1KB indicates likely empty audio
+                logger.warning(f"Very small audio segment created ({file_size} bytes) - may contain no audio")
                 
         except Exception as e:
             logger.error(f"Error extracting audio segment with FFmpeg: {e}")
             raise
+    
+    async def _validate_video_file(self, video_path: str):
+        """Pre-validate video file integrity and audio streams"""
+        try:
+            # Check if file exists and has reasonable size
+            if not os.path.exists(video_path):
+                raise ValueError("Video file does not exist")
+            
+            file_size = os.path.getsize(video_path)
+            if file_size == 0:
+                raise ValueError("Video file is empty")
+            
+            if file_size < 1024:  # Less than 1KB
+                raise ValueError("Video file is too small to be valid")
+            
+            # Use FFprobe to check video file integrity and audio streams
+            try:
+                cmd = [
+                    'ffprobe',
+                    '-v', 'error',
+                    '-select_streams', 'a:0',  # Check for audio stream
+                    '-show_entries', 'stream=codec_name,duration',
+                    '-of', 'csv=p=0',
+                    video_path
+                ]
+                
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, self._run_ffprobe_command, cmd)
+                
+                output = result.stdout.strip()
+                if not output or output == "N/A":
+                    logger.warning(f"Video {video_path} may not have an audio stream")
+                    # Don't fail here - video might have no audio, which is OK
+                else:
+                    logger.info(f"Video has audio stream: {output}")
+                    
+            except Exception as probe_error:
+                logger.warning(f"Could not validate video audio stream: {probe_error}")
+                # Don't fail validation - proceed anyway
+            
+            logger.info(f"Video file validation passed: {file_size} bytes")
+            
+        except Exception as e:
+            logger.error(f"Video validation failed: {e}")
+            raise ValueError(f"Video file validation failed: {str(e)}")
     
     async def _get_video_duration(self, video_path: str) -> float:
         """Get video duration in seconds using multiple methods"""
@@ -622,17 +679,27 @@ class TextExtractionService:
                 '-acodec', 'pcm_s16le',  # PCM audio codec
                 '-ar', '16000',  # 16kHz sample rate
                 '-ac', '1',  # Mono channel
+                '-af', 'volume=1.0',  # Ensure audio is processed
+                '-map', '0:a',  # Map first audio stream
                 output_path
             ]
             
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._run_ffmpeg_command, cmd)
             
-            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                raise ValueError("FFmpeg failed to extract audio segment")
+            # Validate extracted audio file
+            if not os.path.exists(output_path):
+                raise ValueError("FFmpeg failed to create audio segment file")
+            
+            file_size = os.path.getsize(output_path)
+            if file_size == 0:
+                raise ValueError("FFmpeg created empty audio segment file")
+            
+            if file_size < 1024:  # Less than 1KB indicates likely empty audio
+                logger.warning(f"Very small video audio segment created ({file_size} bytes) - may contain no audio")
                 
         except Exception as e:
-            logger.error(f"Error extracting audio segment with FFmpeg: {e}")
+            logger.error(f"Error extracting video audio segment with FFmpeg: {e}")
             raise
     
     async def _extract_segment_audio_moviepy(self, video_path: str, output_path: str, start_time: float, duration: float):
@@ -652,9 +719,17 @@ class TextExtractionService:
         try:
             video = VideoFileClip(video_path)
             
-            # Extract segment
+            # Extract segment - handle both subclip and subclipped methods
             end_time = start_time + duration
-            segment = video.subclip(start_time, end_time)
+            try:
+                # Try modern MoviePy method first
+                segment = video.subclip(start_time, end_time)
+            except AttributeError:
+                # Fallback for older MoviePy versions
+                try:
+                    segment = video.subclipped(start_time, end_time)
+                except AttributeError:
+                    raise ValueError("MoviePy version not compatible - please upgrade or downgrade MoviePy")
             
             # Extract audio
             audio = segment.audio
@@ -771,6 +846,31 @@ class TextExtractionService:
     async def _transcribe_with_whisper(self, audio_path: str) -> str:
         """Transcribe audio using OpenAI Whisper with timeout"""
         try:
+            # Validate audio file before processing
+            if not os.path.exists(audio_path):
+                raise ValueError("Audio file does not exist")
+            
+            file_size = os.path.getsize(audio_path)
+            if file_size == 0:
+                raise ValueError("Audio file is empty")
+            
+            if file_size < 1024:  # Less than 1KB
+                logger.warning(f"Very small audio file ({file_size} bytes) - may not contain speech")
+                return "No clear speech detected in this segment."
+            
+            # Additional audio validation using basic file checks
+            try:
+                # Check if it's a valid audio file by trying to get its info
+                import wave
+                with wave.open(audio_path, 'rb') as wav_file:
+                    frames = wav_file.getnframes()
+                    if frames == 0:
+                        logger.warning("Audio file has no frames")
+                        return "No audio content detected in this segment."
+            except Exception:
+                # Not a WAV file or corrupted, but let Whisper try anyway
+                logger.debug("Could not validate audio file format, proceeding with Whisper")
+            
             # Run Whisper in executor with timeout to prevent hanging
             loop = asyncio.get_event_loop()
             
@@ -790,9 +890,27 @@ class TextExtractionService:
     def _whisper_transcribe_sync(self, audio_path: str) -> str:
         """Synchronous Whisper transcription"""
         try:
+            # Check if model is loaded
+            if not self.whisper_model:
+                raise ValueError("Whisper model not loaded")
+            
+            # Load audio and check if it's valid
+            import numpy as np
+            audio_data = whisper.load_audio(audio_path)
+            
+            # Check for empty or invalid audio data
+            if audio_data is None or len(audio_data) == 0:
+                logger.warning("Empty audio data loaded from file")
+                return "No audio content detected in this segment."
+            
+            # Check if audio contains only silence (very low energy)
+            if np.max(np.abs(audio_data)) < 0.001:
+                logger.warning("Audio appears to contain only silence")
+                return "No speech detected in this segment."
+            
             # Transcribe with Whisper with optimized settings for speed
             result = self.whisper_model.transcribe(
-                audio_path,
+                audio_data,  # Pass the loaded audio data instead of file path
                 language="en",  # Force English for better performance
                 word_timestamps=False,  # Disable for faster processing
                 fp16=False,  # Use fp32 for better compatibility
@@ -803,19 +921,24 @@ class TextExtractionService:
             )
             
             # Extract text
-            text = result["text"]
+            text = result.get("text", "").strip()
+            
+            # Check if transcription is meaningful
+            if not text or len(text) < 3:
+                logger.info("No meaningful speech detected in segment")
+                return "No clear speech detected in this segment."
             
             # Add timestamps and segment info if available
             if "segments" in result and result["segments"]:
                 logger.info(f"Transcribed {len(result['segments'])} segments")
                 
-                # Optionally, we could add segment-based chunking here
-                # For now, just return the full text
-                
-            return text.strip()
+            return text
             
         except Exception as e:
             logger.error(f"Whisper sync transcription error: {e}")
+            # Return a more helpful error message instead of raising
+            if "tensor" in str(e).lower() and "reshape" in str(e).lower():
+                return "Audio segment could not be processed - may contain no valid audio data."
             raise
     
     async def batch_transcribe_videos(self, video_paths: list) -> dict:

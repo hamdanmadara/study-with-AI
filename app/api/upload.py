@@ -69,7 +69,12 @@ async def upload_file(file: UploadFile = File(...)):
         
         # Get queue information
         queue_status = document_processor.get_queue_status()
-        estimated_wait = document_processor.get_estimated_wait_time()
+        estimated_wait = document_processor.get_estimated_wait_time(file.filename)
+        
+        # Determine appropriate queue size based on file type
+        file_extension = Path(file.filename).suffix.lower()
+        is_media_file = file_extension in ['.mp4', '.avi', '.mov', '.mkv', '.mp3', '.wav', '.flac', '.aac', '.m4a']
+        position_in_queue = queue_status["media_queue_size"] if is_media_file else queue_status["pdf_queue_size"]
         
         response_data = {
             "message": "File uploaded successfully and queued for processing",
@@ -79,7 +84,10 @@ async def upload_file(file: UploadFile = File(...)):
             "status": document.status.value,
             "created_at": document.created_at.isoformat(),
             "queue_info": {
-                "position_in_queue": queue_status["queue_size"],
+                "position_in_queue": position_in_queue,
+                "total_queue_size": queue_status["total_queue_size"],
+                "pdf_queue_size": queue_status["pdf_queue_size"],
+                "media_queue_size": queue_status["media_queue_size"],
                 "active_workers": queue_status["active_workers"],
                 "estimated_wait_minutes": estimated_wait,
                 "processing_message": "Your file is in the processing queue. You can refresh this page in a few minutes to check progress."
@@ -89,11 +97,14 @@ async def upload_file(file: UploadFile = File(...)):
         # Add specific messages based on file type and queue status
         if document.file_type.value in ["video", "audio"]:
             if estimated_wait and estimated_wait > 0:
-                response_data["queue_info"]["processing_message"] = f"Your {document.file_type.value} file is queued for processing. Estimated wait time: {estimated_wait} minutes. You can refresh this page to check progress."
+                response_data["queue_info"]["processing_message"] = f"Your {document.file_type.value} file is queued for processing. Audio/video files are processed ONE AT A TIME to prevent conflicts. Estimated wait time: {estimated_wait} minutes. You can refresh this page to check progress."
             else:
-                response_data["queue_info"]["processing_message"] = f"Your {document.file_type.value} file is being processed now. This may take several minutes depending on file length. You can refresh this page to check progress."
+                response_data["queue_info"]["processing_message"] = f"Your {document.file_type.value} file is being processed now. Audio/video files are processed exclusively to ensure quality. This may take several minutes depending on file length. You can refresh this page to check progress."
         else:
-            response_data["queue_info"]["processing_message"] = "Your PDF file is queued for processing. You can refresh this page in a few minutes to check progress."
+            if estimated_wait and estimated_wait > 0:
+                response_data["queue_info"]["processing_message"] = f"Your PDF file is queued for processing. Estimated wait time: {estimated_wait} minutes. You can refresh this page to check progress."
+            else:
+                response_data["queue_info"]["processing_message"] = "Your PDF file is being processed now. You can refresh this page in a few minutes to check progress."
         
         return JSONResponse(
             status_code=202,
@@ -304,7 +315,9 @@ async def get_estimated_wait_time():
         
         return {
             "estimated_wait_minutes": estimated_wait,
-            "queue_size": queue_status["queue_size"],
+            "total_queue_size": queue_status["total_queue_size"],
+            "pdf_queue_size": queue_status["pdf_queue_size"],
+            "media_queue_size": queue_status["media_queue_size"],
             "active_workers": queue_status["active_workers"],
             "message": message
         }

@@ -160,9 +160,11 @@ class DocumentProcessor:
         """Get current queue status"""
         return queue_service.get_queue_status()
     
-    def get_estimated_wait_time(self):
-        """Get estimated wait time for new uploads"""
-        return queue_service.get_estimated_wait_time()
+    def get_estimated_wait_time(self, filename: str = ''):
+        """Get estimated wait time for new uploads based on file type"""
+        # Extract file extension to determine file type
+        file_extension = filename.lower().split('.')[-1] if '.' in filename else 'pdf'
+        return queue_service.get_estimated_wait_time(file_extension)
     
     async def delete_document(self, document_id: str):
         """Delete document and its data"""
