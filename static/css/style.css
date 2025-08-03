@@ -312,12 +312,204 @@ section h2 {
     color: #475569;
 }
 
-/* Documents List */
+/* Main Content Split Layout */
+.main-content {
+    display: flex;
+    gap: 20px;
+    height: calc(100vh - 300px); /* Adjust based on header + upload section height */
+    min-height: 600px;
+}
+
+.content-left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 0; /* Allows flex shrinking */
+}
+
+.content-right {
+    width: 350px;
+    min-width: 300px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Document Viewer Section */
+.viewer-section {
+    background: #f8fafc;
+    border-radius: 15px;
+    padding: 20px;
+    border: 1px solid #e2e8f0;
+    height: 60%;
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+}
+
+.viewer-header {
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.viewer-header h2 {
+    color: #1e293b;
+    font-size: 1.3rem;
+    margin: 0;
+    font-weight: 600;
+}
+
+.document-viewer {
+    flex: 1;
+    background: white;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+    position: relative;
+}
+
+.no-document-selected {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.empty-state {
+    text-align: center;
+    color: #94a3b8;
+}
+
+.empty-icon {
+    font-size: 4rem;
+    margin-bottom: 15px;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+/* Document Viewer Content */
+.viewer-content {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+}
+
+.viewer-content iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 8px;
+    background: white;
+}
+
+.viewer-content video {
+    width: 100%;
+    max-height: 100%;
+    border-radius: 8px;
+    background: #000;
+}
+
+.viewer-content audio {
+    width: 100%;
+    border-radius: 8px;
+}
+
+/* Audio Player Container */
+.audio-player-container {
+    text-align: center;
+    padding: 40px 20px;
+    background: #f8fafc;
+    border-radius: 12px;
+    border: 2px dashed #cbd5e1;
+    width: 100%;
+    max-width: 400px;
+}
+
+.audio-info {
+    margin-bottom: 20px;
+}
+
+.audio-info h3 {
+    color: #1e293b;
+    margin-bottom: 8px;
+    font-size: 1.1rem;
+    word-break: break-word;
+}
+
+.audio-info p {
+    color: #64748b;
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.audio-player-container audio {
+    width: 100%;
+    margin-top: 15px;
+}
+
+/* Unsupported File Display */
+.unsupported-file {
+    text-align: center;
+    padding: 40px 20px;
+    background: #f8fafc;
+    border-radius: 12px;
+    border: 2px dashed #cbd5e1;
+}
+
+.unsupported-file .empty-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+    opacity: 0.5;
+}
+
+.unsupported-file p {
+    color: #64748b;
+    margin-bottom: 20px;
+    font-size: 1rem;
+}
+
+.download-btn {
+    display: inline-block;
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    color: white;
+    text-decoration: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.download-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(79, 70, 229, 0.3);
+}
+
+/* Documents Sidebar */
+.documents-sidebar {
+    background: #f8fafc;
+    border-radius: 15px;
+    padding: 20px;
+    border: 1px solid #e2e8f0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
 .documents-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
+    flex-shrink: 0;
 }
 
 .refresh-btn {
@@ -346,17 +538,41 @@ section h2 {
 }
 
 .documents-list {
-    display: grid;
-    gap: 15px;
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-right: 5px; /* Space for scrollbar */
+}
+
+/* Custom scrollbar for documents list */
+.documents-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.documents-list::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 3px;
+}
+
+.documents-list::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.documents-list::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
 }
 
 .document-item {
     background: white;
     border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    padding: 20px;
+    border-radius: 8px;
+    padding: 15px;
     transition: all 0.3s ease;
     cursor: pointer;
+    flex-shrink: 0;
 }
 
 .document-item:hover {
@@ -411,7 +627,10 @@ section h2 {
 .document-name {
     font-weight: 600;
     color: #1e293b;
-    flex-grow: 1;
+    font-size: 0.9rem;
+    margin-bottom: 5px;
+    line-height: 1.3;
+    word-break: break-word;
 }
 
 .document-status {
@@ -428,18 +647,31 @@ section h2 {
 .status-failed { background: #fee2e2; color: #dc2626; }
 
 .document-info {
-    font-size: 0.9rem;
+    margin-top: 8px;
+}
+
+.document-status {
+    font-size: 0.8rem;
     color: #64748b;
-    display: flex;
-    gap: 15px;
-    flex-wrap: wrap;
+    margin-bottom: 5px;
+}
+
+.document-date {
+    font-size: 0.75rem;
+    color: #94a3b8;
 }
 
 .no-documents {
     text-align: center;
     color: #94a3b8;
     font-style: italic;
-    padding: 40px;
+    padding: 30px 15px;
+    margin: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 100px;
 }
 
 /* Processing Progress Styles */
@@ -492,6 +724,17 @@ section h2 {
 .feature-selector select:focus {
     outline: none;
     border-color: #4f46e5;
+}
+
+/* Features Section in Split Layout */
+.content-left .features-section {
+    background: #f8fafc;
+    border-radius: 15px;
+    padding: 20px;
+    border: 1px solid #e2e8f0;
+    height: 40%;
+    min-height: 250px;
+    overflow-y: auto;
 }
 
 /* Feature Interfaces */
@@ -1158,6 +1401,28 @@ section h2 {
 }
 
 /* Responsive Design */
+@media (max-width: 1024px) {
+    .main-content {
+        flex-direction: column;
+        height: auto;
+    }
+    
+    .content-right {
+        width: 100%;
+        max-width: none;
+        height: 300px;
+    }
+    
+    .viewer-section {
+        height: 400px;
+    }
+    
+    .content-left .features-section {
+        height: auto;
+        min-height: 200px;
+    }
+}
+
 @media (max-width: 768px) {
     .container {
         margin: 10px;
@@ -1196,5 +1461,17 @@ section h2 {
     .document-info {
         flex-direction: column;
         gap: 5px;
+    }
+    
+    .main-content {
+        gap: 15px;
+    }
+    
+    .content-right {
+        height: 250px;
+    }
+    
+    .viewer-section {
+        height: 300px;
     }
 }

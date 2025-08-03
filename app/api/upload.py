@@ -358,3 +358,75 @@ async def get_estimated_wait_time():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get wait time: {str(e)}")
+
+@router.get("/view/{document_id}")
+async def get_document_view_url(document_id: str):
+    """Get a signed URL to view the document content"""
+    try:
+        # Get document info
+        document = document_processor.get_document_status(document_id)
+        
+        if document.status.value != 'completed':
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Document is not ready for viewing. Status: {document.status.value}"
+            )
+        
+        # Check if document is stored in R2
+        if document.storage_type == "r2" and settings.use_r2_storage:
+            # Get signed URL from R2
+            try:
+                signed_url = r2_storage_service.get_signed_url(
+                    document.file_path,  # This is the R2 object key
+                    expiration=3600  # 1 hour expiration
+                )
+                
+                response_data = {
+                    "document_id": document.id,
+                    "filename": document.filename,
+                    "file_type": document.file_type.value,
+                    "view_url": signed_url,
+                    "content_type": _get_content_type_from_filename(document.filename),
+                    "expires_in": 3600,
+                    "storage_type": "r2"
+                }
+                
+                return response_data
+                
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Failed to generate view URL: {str(e)}"
+                )
+        else:
+            # For local storage, we'd need to serve the file directly
+            # This would require a separate file serving endpoint
+            raise HTTPException(
+                status_code=501, 
+                detail="Local file viewing not implemented. Please use R2 storage."
+            )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get view URL: {str(e)}")
+
+def _get_content_type_from_filename(filename: str) -> str:
+    """Get content type based on file extension"""
+    extension = Path(filename).suffix.lower()
+    content_types = {
+        '.pdf': 'application/pdf',
+        '.mp4': 'video/mp4',
+        '.avi': 'video/x-msvideo',
+        '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
+        '.flac': 'audio/flac'
+    }
+    return content_types.get(extension, 'application/octet-stream')

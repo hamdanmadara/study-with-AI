@@ -486,9 +486,15 @@ async function loadDocuments() {
         const data = await response.json();
         
         const documentsList = document.getElementById('documentsList');
+        const mainContent = document.getElementById('mainContent');
         if (!documentsList) return;
         
         if (data.documents && data.documents.length > 0) {
+            // Show the main content area when documents exist
+            if (mainContent) {
+                mainContent.style.display = 'flex';
+            }
+            
             documentsList.innerHTML = data.documents.map(doc => {
                 const statusIcon = {
                     'pending': '⏳',
@@ -552,6 +558,10 @@ async function loadDocuments() {
             }).join('');
         } else {
             documentsList.innerHTML = '<p class="no-documents">No documents uploaded yet</p>';
+            // Hide main content if no documents
+            if (mainContent) {
+                mainContent.style.display = 'none';
+            }
         }
     } catch (error) {
         console.error('Error loading documents:', error);
@@ -573,6 +583,7 @@ function selectDocument(documentId) {
             if (result.status === 'completed') {
                 selectedDocument = result;
                 showFeatures();
+                loadDocumentViewer(documentId);
                 showToast('Document selected!', 'success');
                 
                 // Highlight selected document
@@ -597,6 +608,108 @@ function selectDocument(documentId) {
             console.error('Error selecting document:', error);
             showToast('Error selecting document', 'error');
         });
+}
+
+// Load document viewer
+async function loadDocumentViewer(documentId) {
+    const viewerTitle = document.getElementById('viewerTitle');
+    const documentViewer = document.getElementById('documentViewer');
+    
+    if (!documentViewer || !viewerTitle) return;
+    
+    try {
+        // Show loading state
+        viewerTitle.textContent = '📄 Loading document...';
+        documentViewer.innerHTML = `
+            <div class="no-document-selected">
+                <div class="empty-state">
+                    <div class="empty-icon">⏳</div>
+                    <p>Loading document viewer...</p>
+                </div>
+            </div>
+        `;
+        
+        // Get the view URL for the document
+        const response = await fetch(`/api/upload/view/${documentId}`);
+        const viewData = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(viewData.detail || 'Failed to get view URL');
+        }
+        
+        // Update viewer title
+        viewerTitle.textContent = `📄 ${viewData.filename}`;
+        
+        // Create viewer content based on file type
+        let viewerContent = '';
+        
+        if (viewData.file_type === 'pdf') {
+            viewerContent = `
+                <div class="viewer-content">
+                    <iframe src="${viewData.view_url}" 
+                            title="${viewData.filename}"
+                            allow="fullscreen">
+                        <p>Your browser doesn't support PDF viewing. 
+                           <a href="${viewData.view_url}" target="_blank">Download the PDF</a>
+                        </p>
+                    </iframe>
+                </div>
+            `;
+        } else if (viewData.file_type === 'video') {
+            viewerContent = `
+                <div class="viewer-content">
+                    <video controls preload="metadata">
+                        <source src="${viewData.view_url}" type="${viewData.content_type}">
+                        Your browser doesn't support video playback.
+                        <a href="${viewData.view_url}" target="_blank">Download the video</a>
+                    </video>
+                </div>
+            `;
+        } else if (viewData.file_type === 'audio') {
+            viewerContent = `
+                <div class="viewer-content">
+                    <div class="audio-player-container">
+                        <div class="audio-info">
+                            <h3>🎵 ${viewData.filename}</h3>
+                            <p>Audio file ready to play</p>
+                        </div>
+                        <audio controls preload="metadata">
+                            <source src="${viewData.view_url}" type="${viewData.content_type}">
+                            Your browser doesn't support audio playback.
+                            <a href="${viewData.view_url}" target="_blank">Download the audio</a>
+                        </audio>
+                    </div>
+                </div>
+            `;
+        } else {
+            viewerContent = `
+                <div class="viewer-content">
+                    <div class="unsupported-file">
+                        <div class="empty-icon">📄</div>
+                        <p>Preview not available for this file type</p>
+                        <a href="${viewData.view_url}" target="_blank" class="download-btn">
+                            📥 Download ${viewData.filename}
+                        </a>
+                    </div>
+                </div>
+            `;
+        }
+        
+        documentViewer.innerHTML = viewerContent;
+        
+    } catch (error) {
+        console.error('Error loading document viewer:', error);
+        viewerTitle.textContent = '❌ Error loading document';
+        documentViewer.innerHTML = `
+            <div class="no-document-selected">
+                <div class="empty-state">
+                    <div class="empty-icon">❌</div>
+                    <p>Failed to load document: ${error.message}</p>
+                </div>
+            </div>
+        `;
+        showToast('Failed to load document viewer', 'error');
+    }
 }
 
 // Upload queue management functions
@@ -823,6 +936,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
         
+        // Setup drag and drop
+        const uploadArea = document.getElementById('uploadArea');
+        if (uploadArea) {
+            setupDragAndDrop(uploadArea, fileInput);
+        }
+        
         console.log('Simple app ready!');
         loadDocuments(); // Load existing documents on startup
         showToast('App ready! Upload files and use the Refresh button to check processing status.', 'success');
@@ -830,3 +949,36 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('Could not find upload elements');
     }
 });
+
+// Setup drag and drop functionality
+function setupDragAndDrop(uploadArea, fileInput) {
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+    
+    uploadArea.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length > 0) {
+            console.log('Files dropped:', files.length);
+            files.forEach(file => {
+                console.log('Uploading dropped file:', file.name);
+                uploadFile(file);
+            });
+        }
+    });
+    
+    uploadArea.addEventListener('click', (e) => {
+        if (e.target === uploadArea || e.target.closest('.upload-content')) {
+            fileInput.click();
+        }
+    });
+}

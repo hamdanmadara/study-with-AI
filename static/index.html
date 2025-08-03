@@ -43,21 +43,44 @@
                 </div>
             </section>
 
-            <!-- Documents List -->
-            <section class="documents-section">
-                <div class="documents-header">
-                    <h2>📄 Your Documents</h2>
-                    <button class="refresh-btn" id="refreshBtn" onclick="refreshDocuments()">🔄 Refresh</button>
-                </div>
-                <div class="documents-list" id="documentsList">
-                    <p class="no-documents">No documents uploaded yet</p>
-                </div>
-            </section>
+            <!-- Main Content Area - Split Layout -->
+            <div class="main-content" id="mainContent" style="display: none;">
+                <!-- Left Side - Document Viewer and Features -->
+                <div class="content-left">
+                    <!-- Document Viewer Section -->
+                    <section class="viewer-section">
+                        <div class="viewer-header">
+                            <h2 id="viewerTitle">📄 Select a document to view</h2>
+                        </div>
+                        <div class="document-viewer" id="documentViewer">
+                            <div class="no-document-selected">
+                                <div class="empty-state">
+                                    <div class="empty-icon">📄</div>
+                                    <p>Select a document from the list to view it here</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
 
-            <!-- Features Section -->
-            <section class="features-section" id="featuresSection" style="display: none;">
-                <!-- Features will be populated by JavaScript -->
-            </section>
+                    <!-- Features Section -->
+                    <section class="features-section" id="featuresSection" style="display: none;">
+                        <!-- Features will be populated by JavaScript -->
+                    </section>
+                </div>
+
+                <!-- Right Side - Documents List -->
+                <div class="content-right">
+                    <section class="documents-sidebar">
+                        <div class="documents-header">
+                            <h2>📄 Your Documents</h2>
+                            <button class="refresh-btn" id="refreshBtn" onclick="refreshDocuments()">🔄 Refresh</button>
+                        </div>
+                        <div class="documents-list" id="documentsList">
+                            <p class="no-documents">No documents uploaded yet</p>
+                        </div>
+                    </section>
+                </div>
+            </div>
         </main>
 
         <!-- Loading Modal -->
