@@ -27,12 +27,9 @@ class Document(BaseModel):
     processed_at: Optional[datetime] = None
     error_message: Optional[str] = None
     
-    # R2 Storage fields
-    r2_object_key: Optional[str] = None  # R2 object key for the file
-    r2_bucket_name: Optional[str] = None  # R2 bucket name
-    file_url: Optional[str] = None  # R2 file URL
+    # Storage fields
     file_size: Optional[int] = None  # File size in bytes
-    storage_type: str = "r2"  # Storage type: "local" or "r2"
+    storage_type: str = "supabase"  # Storage type: "local" or "supabase"
     
     # Progress tracking fields
     total_duration: Optional[float] = None  # Total video duration in seconds

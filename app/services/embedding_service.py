@@ -24,8 +24,8 @@ class EmbeddingService:
         
         def load_in_background():
             try:
-                # Use a smaller, faster model for better user experience
-                model_name = "all-MiniLM-L6-v2"  # Much smaller and faster than BAAI/bge-en-icl
+                # Use a stable, smaller model that works reliably on all systems
+                model_name = "all-MiniLM-L6-v2"  # 384 dimensions, stable and fast
                 logger.info(f"🤖 Loading embedding model: {model_name}")
                 logger.info("📥 This may take a few minutes on first run...")
                 
@@ -136,5 +136,9 @@ class EmbeddingService:
         """Create embedding for a single text"""
         embeddings = await self.create_embeddings([text])
         return embeddings[0]
+    
+    async def generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for a single text (alias for create_single_embedding)"""
+        return await self.create_single_embedding(text)
 
 embedding_service = EmbeddingService()

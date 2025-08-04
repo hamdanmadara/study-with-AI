@@ -5,9 +5,17 @@ let selectedDocument = null;
 let uploadQueue = []; // Track all uploads
 let uploadCounter = 0; // Unique ID for each upload
 
-// Simple file upload function with queue tracking
+// Smart file upload function with TUS support for large files
 async function uploadFile(file) {
     console.log('Uploading file:', file.name);
+    
+    // Check authentication before upload
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+        showToast('Please login to upload files', 'error');
+        window.location.href = '/static/auth.html';
+        return;
+    }
     
     // Create upload item and add to queue
     const uploadId = ++uploadCounter;
@@ -27,6 +35,117 @@ async function uploadFile(file) {
     showUploadQueue(true);
     addUploadItemToUI(uploadItem);
     
+    // Check file size and route to appropriate upload method
+    const SUPABASE_LIMIT = 50 * 1024 * 1024; // 50MB
+    
+    if (file.size >= SUPABASE_LIMIT) {
+        console.log(`Large file detected (${(file.size / (1024*1024)).toFixed(1)}MB) - using TUS protocol`);
+        updateUploadItemStatus(uploadId, 'uploading', 0, 'Large file - using chunked upload...');
+        return await uploadWithTUS(file, uploadId, uploadItem);
+    } else {
+        console.log(`Regular file (${(file.size / (1024*1024)).toFixed(1)}MB) - using direct upload`);
+        return await uploadRegular(file, uploadId, uploadItem);
+    }
+}
+
+// TUS upload for large files
+async function uploadWithTUS(file, uploadId, uploadItem) {
+    try {
+        const token = localStorage.getItem('access_token');
+        
+        // Step 1: Create upload session
+        updateUploadItemStatus(uploadId, 'uploading', 0, 'Creating upload session...');
+        
+        // Safe base64 encoding for filenames with special characters
+        function safeBase64Encode(str) {
+            try {
+                // First try UTF-8 to base64 conversion
+                return btoa(unescape(encodeURIComponent(str)));
+            } catch (e) {
+                // Fallback: sanitize filename and encode
+                const sanitized = str.replace(/[^\w\s\-_.]/g, '_');
+                return btoa(sanitized);
+            }
+        }
+
+        const createResponse = await fetch('/api/upload/tus/', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Upload-Length': file.size.toString(),
+                'Upload-Metadata': `filename ${safeBase64Encode(file.name)}`,
+                'Tus-Resumable': '1.0.0'
+            }
+        });
+        
+        if (!createResponse.ok) {
+            const error = await createResponse.json();
+            throw new Error(error.detail || 'Failed to create upload session');
+        }
+        
+        const createResult = await createResponse.json();
+        const tusUploadId = createResult.upload_id;
+        
+        console.log('TUS upload session created:', tusUploadId);
+        
+        // Step 2: Upload file in chunks
+        const chunkSize = 5 * 1024 * 1024; // 5MB chunks
+        const totalChunks = Math.ceil(file.size / chunkSize);
+        let uploadedBytes = 0;
+        
+        updateUploadItemStatus(uploadId, 'uploading', 0, `Uploading in ${totalChunks} chunks...`);
+        
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            const chunk = file.slice(start, end);
+            
+            // Upload chunk
+            const chunkResponse = await fetch(`/api/upload/tus/${tusUploadId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Upload-Offset': uploadedBytes.toString(),
+                    'Content-Type': 'application/offset+octet-stream',
+                    'Tus-Resumable': '1.0.0'
+                },
+                body: chunk
+            });
+            
+            if (!chunkResponse.ok) {
+                const error = await chunkResponse.json();
+                throw new Error(error.detail || `Failed to upload chunk ${chunkIndex + 1}`);
+            }
+            
+            uploadedBytes += chunk.size;
+            const progress = (uploadedBytes / file.size) * 100;
+            
+            updateUploadItemStatus(uploadId, 'uploading', progress, 
+                `Chunk ${chunkIndex + 1}/${totalChunks} (${Math.round(progress)}%)`);
+            
+            console.log(`Uploaded chunk ${chunkIndex + 1}/${totalChunks} (${Math.round(progress)}%)`);
+        }
+        
+        // Step 3: Upload completed successfully
+        updateUploadItemStatus(uploadId, 'completed', 100, 'Upload completed! Processing...');
+        
+        console.log('TUS upload completed successfully');
+        
+        showToast('Large file uploaded successfully and queued for processing! Refresh to check status.', 'success');
+        
+        // Refresh document list
+        loadDocuments();
+        
+    } catch (error) {
+        updateUploadItemStatus(uploadId, 'failed', 0, `Failed: ${error.message}`);
+        uploadItem.error = error.message;
+        showToast(`Large file upload failed: ${error.message}`, 'error');
+        console.error('TUS upload error:', error);
+    }
+}
+
+// Regular upload for smaller files
+async function uploadRegular(file, uploadId, uploadItem) {
     try {
         const formData = new FormData();
         formData.append('file', file);
@@ -68,9 +187,11 @@ async function uploadFile(file) {
                 } else {
                     try {
                         const error = JSON.parse(xhr.responseText);
-                        reject(new Error(error.detail || 'Upload failed'));
+                        console.error('Upload failed:', xhr.status, error);
+                        reject(new Error(error.detail || `HTTP ${xhr.status}: Upload failed`));
                     } catch (e) {
-                        reject(new Error(`HTTP ${xhr.status}: Upload failed`));
+                        console.error('Upload failed with unparseable response:', xhr.status, xhr.responseText);
+                        reject(new Error(`HTTP ${xhr.status}: Upload failed - ${xhr.responseText}`));
                     }
                 }
             };
@@ -82,6 +203,11 @@ async function uploadFile(file) {
         // Start the upload
         xhr.open('POST', '/api/upload/file');
         xhr.timeout = 300000; // 5 minutes timeout
+        
+        // Add authorization header AFTER opening the request
+        const token = localStorage.getItem('access_token');
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        
         xhr.send(formData);
 
         const result = await uploadPromise;
@@ -249,9 +375,17 @@ async function askQuestion() {
     const typingMsg = addChatMessage('Thinking...', 'ai', true);
     
     try {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            throw new Error('Authentication required');
+        }
+        
         const response = await fetch('/api/features/question', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
             body: JSON.stringify({
                 document_id: selectedDocument.document_id,
                 question: question
@@ -300,9 +434,17 @@ async function generateSummary() {
         showToast('Generating summary...', 'info');
         summaryResult.innerHTML = '<div class="loading">🤖 Analyzing document and generating summary...</div>';
         
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            throw new Error('Authentication required');
+        }
+        
         const response = await fetch('/api/features/summary', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
             body: JSON.stringify({
                 document_id: selectedDocument.document_id,
                 max_length: parseInt(summaryLength)
@@ -341,9 +483,17 @@ async function generateQuiz() {
         showToast('Generating quiz...', 'info');
         quizResult.innerHTML = '<div class="loading">🧠 Creating quiz questions...</div>';
         
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            throw new Error('Authentication required');
+        }
+        
         const response = await fetch('/api/features/quiz', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
             body: JSON.stringify({
                 document_id: selectedDocument.document_id,
                 num_questions: parseInt(numQuestions),
@@ -457,6 +607,12 @@ function checkQuizAnswers() {
 async function refreshDocuments() {
     console.log('Manually refreshing documents...');
     
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+        showToast('Please login to refresh documents', 'error');
+        return;
+    }
+    
     // Show refresh feedback
     const refreshBtn = document.getElementById('refreshBtn');
     const originalText = refreshBtn.innerHTML;
@@ -481,8 +637,18 @@ async function refreshDocuments() {
 async function loadDocuments() {
     console.log('Loading documents...');
     
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+        showToast('Please login to view documents', 'error');
+        return;
+    }
+    
     try {
-        const response = await fetch('/api/upload/documents');
+        const response = await fetch('/api/upload/documents', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
         const data = await response.json();
         
         const documentsList = document.getElementById('documentsList');
@@ -576,8 +742,18 @@ async function loadDocuments() {
 function selectDocument(documentId) {
     console.log('Selecting document:', documentId);
     
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+        showToast('Please login to select documents', 'error');
+        return;
+    }
+    
     // Find the document
-    fetch(`/api/upload/status/${documentId}`)
+    fetch(`/api/upload/status/${documentId}`, {
+        headers: {
+            'Authorization': `Bearer ${token}`
+        }
+    })
         .then(response => response.json())
         .then(result => {
             if (result.status === 'completed') {
@@ -629,8 +805,17 @@ async function loadDocumentViewer(documentId) {
             </div>
         `;
         
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            throw new Error('Authentication required');
+        }
+        
         // Get the view URL for the document
-        const response = await fetch(`/api/upload/view/${documentId}`);
+        const response = await fetch(`/api/upload/view/${documentId}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
         const viewData = await response.json();
         
         if (!response.ok) {
@@ -907,9 +1092,56 @@ function showToast(message, type = 'info') {
     }
 }
 
+// Authentication functions
+function checkAuthentication() {
+    const token = localStorage.getItem('access_token');
+    const userInfo = localStorage.getItem('user_info');
+    
+    if (!token) {
+        // User not authenticated, show auth overlay
+        document.getElementById('authOverlay').style.display = 'flex';
+        return false;
+    }
+    
+    // User is authenticated, show user info
+    const userInfoElement = document.getElementById('userInfo');
+    const userEmailElement = document.getElementById('userEmail');
+    
+    if (userInfo && userInfoElement && userEmailElement) {
+        const user = JSON.parse(userInfo);
+        userEmailElement.textContent = user.email;
+        userInfoElement.style.display = 'flex';
+        console.log('User info displayed:', user.email);
+    } else {
+        console.log('No user info found or elements missing');
+    }
+    
+    return true;
+}
+
+function logout() {
+    // Clear all stored tokens and user info
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user_info');
+    
+    // Show logout message
+    showToast('Logged out successfully', 'success');
+    
+    // Redirect to auth page after a short delay
+    setTimeout(() => {
+        window.location.href = '/static/auth.html';
+    }, 1000);
+}
+
 // Initialize simple app
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Simple app initializing...');
+    
+    // Check authentication first
+    if (!checkAuthentication()) {
+        return; // Stop initialization if not authenticated
+    }
     
     const fileInput = document.getElementById('fileInput');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -942,7 +1174,20 @@ document.addEventListener('DOMContentLoaded', () => {
             setupDragAndDrop(uploadArea, fileInput);
         }
         
+        // Setup logout button
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', logout);
+        }
+        
         console.log('Simple app ready!');
+        
+        // Debug: Check what's in localStorage
+        const token = localStorage.getItem('access_token');
+        const userInfo = localStorage.getItem('user_info');
+        console.log('Debug - Token exists:', !!token);
+        console.log('Debug - User info:', userInfo);
+        
         loadDocuments(); // Load existing documents on startup
         showToast('App ready! Upload files and use the Refresh button to check processing status.', 'success');
     } else {

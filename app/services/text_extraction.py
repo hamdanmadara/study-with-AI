@@ -936,10 +936,21 @@ class TextExtractionService:
             
         except Exception as e:
             logger.error(f"Whisper sync transcription error: {e}")
-            # Return a more helpful error message instead of raising
-            if "tensor" in str(e).lower() and "reshape" in str(e).lower():
-                return "Audio segment could not be processed - may contain no valid audio data."
-            raise
+            # Handle specific errors gracefully
+            error_msg = str(e).lower()
+            if "tensor" in error_msg and "reshape" in error_msg:
+                logger.warning("Audio segment contains no valid data - returning empty transcription")
+                return ""
+            elif "timeout" in error_msg:
+                logger.warning("Audio transcription timed out - returning partial result")
+                return ""
+            elif "no speech" in error_msg or "empty" in error_msg:
+                logger.info("No speech detected in audio segment")
+                return ""
+            else:
+                # For other errors, still return empty instead of crashing
+                logger.error(f"Unexpected Whisper error: {e}")
+                return ""
     
     async def batch_transcribe_videos(self, video_paths: list) -> dict:
         """Batch process multiple videos for better efficiency"""

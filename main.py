@@ -10,6 +10,8 @@ import time
 from app.core.config import settings
 from app.api.upload import router as upload_router
 from app.api.features import router as features_router
+from app.api.auth import router as auth_router
+from app.api.tus_upload import router as tus_upload_router
 
 # Configure logging
 logger.remove()
@@ -20,7 +22,10 @@ app = FastAPI(
     title=settings.app_name,
     description="AI-powered document processing with Q&A, summary, and quiz generation",
     version="1.0.0",
-    debug=settings.debug
+    debug=settings.debug,
+    # Configure for large file uploads
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
 )
 
 # Add CORS middleware
@@ -48,7 +53,9 @@ else:
     print(f"WARNING: Static directory not found: {static_dir}")
 
 # Include routers
+app.include_router(auth_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
+app.include_router(tus_upload_router, prefix="/api")
 app.include_router(features_router, prefix="/api")
 
 @app.get("/")

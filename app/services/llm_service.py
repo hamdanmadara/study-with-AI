@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 from loguru import logger
 
 from app.core.config import settings
-from app.services.vector_store import vector_store_service
+from app.services.supabase_vector_store import supabase_vector_store
 
 class LLMService:
     def __init__(self):
@@ -18,7 +18,7 @@ class LLMService:
         self.summary_cache = {}
         self.max_cache_size = 50
     
-    async def answer_question(self, question: str, document_id: str) -> Dict[str, Any]:
+    async def answer_question(self, question: str, document_id: str, user_id: str = None) -> Dict[str, Any]:
         """Answer a question using RAG with document context"""
         try:
             # Check cache first
@@ -28,10 +28,11 @@ class LLMService:
                 return self.qa_cache[cache_key]
             
             # Search for relevant context - reduced for faster response
-            similar_chunks = await vector_store_service.search_similar(
+            similar_chunks = await supabase_vector_store.search_similar_documents(
                 query=question,
-                document_id=document_id,
-                n_results=3  # Reduced from 5 to 3 for faster processing
+                user_id=user_id,
+                document_ids=[document_id],
+                limit=3  # Reduced from 5 to 3 for faster processing
             )
             
             if not similar_chunks:
@@ -41,7 +42,7 @@ class LLMService:
                 }
             
             # Prepare context from chunks
-            context = "\n\n".join([chunk['document'] for chunk in similar_chunks])
+            context = "\n\n".join([chunk['chunk_text'] for chunk in similar_chunks])
             
             # Create prompt
             prompt = self._create_qa_prompt(question, context)
@@ -69,8 +70,8 @@ class LLMService:
             sources = [
                 {
                     "chunk_id": chunk['id'],
-                    "content": chunk['document'][:200] + "..." if len(chunk['document']) > 200 else chunk['document'],
-                    "relevance_score": 1 - chunk.get('distance', 0)
+                    "content": chunk['chunk_text'][:200] + "..." if len(chunk['chunk_text']) > 200 else chunk['chunk_text'],
+                    "relevance_score": chunk.get('similarity', 0.8)  # Supabase returns similarity score
                 }
                 for chunk in similar_chunks
             ]
@@ -105,19 +106,20 @@ class LLMService:
                 "context_used": False
             }
     
-    async def generate_summary(self, document_id: str, max_length: int = 500) -> Dict[str, Any]:
+    async def generate_summary(self, document_id: str, user_id: str = None, max_length: int = 500) -> Dict[str, Any]:
         """Generate a summary of the document using ALL content with optimization"""
         try:
             # Get all document chunks
-            chunks = await vector_store_service.get_document_chunks(document_id)
+            chunks = await supabase_vector_store.get_document_chunks(document_id, user_id)
             
             if not chunks:
                 logger.warning(f"No chunks found for document {document_id}, using search fallback")
                 # Try using search as fallback
-                search_results = await vector_store_service.search_similar(
+                search_results = await supabase_vector_store.search_similar_documents(
                     query="summary content overview",
-                    document_id=document_id,
-                    n_results=10
+                    user_id=user_id,
+                    document_ids=[document_id],
+                    limit=10
                 )
                 if search_results:
                     chunks = search_results
@@ -129,7 +131,7 @@ class LLMService:
                     }
             
             # ALWAYS use ALL chunks for complete coverage
-            full_text = " ".join([chunk['document'] for chunk in chunks])
+            full_text = " ".join([chunk['chunk_text'] for chunk in chunks])
             total_chunks = len(chunks)
             
             logger.info(f"Processing summary for {total_chunks} chunks, {len(full_text)} characters, target: {max_length} words")
@@ -362,20 +364,21 @@ IMPORTANT: Create a cohesive, well-structured summary of exactly {max_length} wo
         
         return all_questions[:num_questions]
     
-    async def generate_quiz(self, document_id: str, num_questions: int = 5, 
+    async def generate_quiz(self, document_id: str, user_id: str = None, num_questions: int = 5, 
                           difficulty: str = "medium") -> Dict[str, Any]:
         """Generate a multiple-choice quiz from ALL document content with optimization"""
         try:
             # Get ALL document chunks
-            chunks = await vector_store_service.get_document_chunks(document_id)
+            chunks = await supabase_vector_store.get_document_chunks(document_id, user_id)
             
             if not chunks:
                 logger.warning(f"No chunks found for document {document_id}, using search fallback")
                 # Try using search as fallback
-                search_results = await vector_store_service.search_similar(
+                search_results = await supabase_vector_store.search_similar_documents(
                     query="quiz questions content overview",
-                    document_id=document_id,
-                    n_results=10
+                    user_id=user_id,
+                    document_ids=[document_id],
+                    limit=10
                 )
                 if search_results:
                     chunks = search_results
@@ -387,7 +390,7 @@ IMPORTANT: Create a cohesive, well-structured summary of exactly {max_length} wo
                     }
             
             # ALWAYS use ALL chunks for complete coverage
-            full_text = " ".join([chunk['document'] for chunk in chunks])
+            full_text = " ".join([chunk['chunk_text'] for chunk in chunks])
             total_chunks = len(chunks)
             
             logger.info(f"Processing quiz for {total_chunks} chunks, {len(full_text)} characters, target: {num_questions} questions")

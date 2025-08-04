@@ -62,6 +62,9 @@ class QueueService:
     
     async def add_document_to_queue(self, document: Document, processor_callback):
         """Add document to appropriate processing queue based on file type"""
+        # Ensure workers are started
+        await self.start_workers()
+        
         # Determine if this is a media file (audio/video) or PDF
         file_extension = document.filename.lower().split('.')[-1] if '.' in document.filename else ''
         is_media_file = file_extension in ['mp4', 'avi', 'mov', 'mkv', 'mp3', 'wav', 'flac', 'aac', 'm4a']

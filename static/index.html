@@ -9,8 +9,18 @@
 <body>
     <div class="container">
         <header>
-            <h1>📚 Study AI Assistant</h1>
-            <p>Upload documents or videos and interact with AI-powered features</p>
+            <div class="header-content">
+                <div class="header-left">
+                    <h1>📚 Study AI Assistant</h1>
+                    <p>Upload documents or videos and interact with AI-powered features</p>
+                </div>
+                <div class="header-right">
+                    <div class="user-info" id="userInfo" style="display: none;">
+                        <span class="user-email" id="userEmail"></span>
+                        <button class="logout-btn" id="logoutBtn">Logout</button>
+                    </div>
+                </div>
+            </div>
         </header>
 
         <main>
@@ -93,8 +103,17 @@
 
         <!-- Toast Notifications -->
         <div class="toast" id="toast"></div>
+        
+        <!-- Authentication required overlay -->
+        <div class="auth-overlay" id="authOverlay" style="display: none;">
+            <div class="auth-overlay-content">
+                <h2>🔐 Authentication Required</h2>
+                <p>Please sign in to access Study AI Assistant</p>
+                <a href="/static/auth.html" class="auth-btn">Sign In / Sign Up</a>
+            </div>
+        </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=20250804"></script>
 </body>
 </html>

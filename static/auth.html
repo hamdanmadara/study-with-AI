@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study AI Assistant - Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        /* Auth-specific styles */
+        .auth-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+
+        .auth-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .auth-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .auth-header h1 {
+            color: #1e293b;
+            font-size: 2rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .auth-header p {
+            color: #64748b;
+            font-size: 1rem;
+        }
+
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .auth-tab {
+            flex: 1;
+            padding: 12px 20px;
+            text-align: center;
+            background: none;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .auth-tab.active {
+            color: #4f46e5;
+            border-bottom-color: #4f46e5;
+        }
+
+        .auth-form {
+            display: none;
+        }
+
+        .auth-form.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #374151;
+            font-weight: 600;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+
+        .auth-button {
+            width: 100%;
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+
+        .auth-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(79, 70, 229, 0.3);
+        }
+
+        .auth-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .error-message {
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            display: none;
+        }
+
+        .success-message {
+            background: #d1fae5;
+            color: #065f46;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            display: none;
+        }
+
+        .auth-link {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .auth-link a {
+            color: #4f46e5;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .auth-link a:hover {
+            text-decoration: underline;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1>📚 Study AI Assistant</h1>
+                <p>Welcome back! Please sign in to continue.</p>
+            </div>
+
+            <div class="auth-tabs">
+                <button class="auth-tab active" onclick="showLogin()">Login</button>
+                <button class="auth-tab" onclick="showRegister()">Sign Up</button>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+
+            <!-- Login Form -->
+            <form class="auth-form active" id="loginForm">
+                <div class="form-group">
+                    <label for="loginEmail">Email Address</label>
+                    <input type="email" id="loginEmail" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" name="password" required>
+                </div>
+                <button type="submit" class="auth-button" id="loginButton">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Register Form -->
+            <form class="auth-form" id="registerForm">
+                <div class="form-group">
+                    <label for="registerName">Full Name (Optional)</label>
+                    <input type="text" id="registerName" name="fullName">
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email Address</label>
+                    <input type="email" id="registerEmail" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Password</label>
+                    <input type="password" id="registerPassword" name="password" required minlength="6">
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">Confirm Password</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" required minlength="6">
+                </div>
+                <button type="submit" class="auth-button" id="registerButton">
+                    Create Account
+                </button>
+            </form>
+
+            <div class="auth-link">
+                <a href="/static/index.html">← Back to Home</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Tab switching
+        function showLogin() {
+            document.querySelector('.auth-tab.active').classList.remove('active');
+            document.querySelector('.auth-form.active').classList.remove('active');
+            
+            document.querySelectorAll('.auth-tab')[0].classList.add('active');
+            document.getElementById('loginForm').classList.add('active');
+            
+            document.querySelector('.auth-header p').textContent = 'Welcome back! Please sign in to continue.';
+            clearMessages();
+        }
+
+        function showRegister() {
+            document.querySelector('.auth-tab.active').classList.remove('active');
+            document.querySelector('.auth-form.active').classList.remove('active');
+            
+            document.querySelectorAll('.auth-tab')[1].classList.add('active');
+            document.getElementById('registerForm').classList.add('active');
+            
+            document.querySelector('.auth-header p').textContent = 'Create your account to get started.';
+            clearMessages();
+        }
+
+        // Message handling
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            
+            const successDiv = document.getElementById('successMessage');
+            successDiv.style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.style.display = 'none';
+        }
+
+        function clearMessages() {
+            document.getElementById('errorMessage').style.display = 'none';
+            document.getElementById('successMessage').style.display = 'none';
+        }
+
+        function setButtonLoading(button, isLoading) {
+            if (isLoading) {
+                button.disabled = true;
+                button.innerHTML = '<span class="loading-spinner"></span>Processing...';
+            } else {
+                button.disabled = false;
+                button.innerHTML = button.id === 'loginButton' ? 'Sign In' : 'Create Account';
+            }
+        }
+
+        // Login form handling
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const button = document.getElementById('loginButton');
+            
+            if (!email || !password) {
+                showError('Please fill in all fields');
+                return;
+            }
+            
+            setButtonLoading(button, true);
+            clearMessages();
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    // Store tokens
+                    localStorage.setItem('access_token', data.access_token);
+                    if (data.refresh_token) {
+                        localStorage.setItem('refresh_token', data.refresh_token);
+                    }
+                    
+                    // Store user info
+                    const userInfo = {
+                        user_id: data.user_id,
+                        email: data.email,
+                        user_metadata: data.user_metadata || {}
+                    };
+                    localStorage.setItem('user_info', JSON.stringify(userInfo));
+                    
+                    console.log('Login successful, stored user info:', userInfo);
+                    
+                    showSuccess('Login successful! Redirecting...');
+                    
+                    // Redirect to main app
+                    setTimeout(() => {
+                        window.location.href = '/static/index.html';
+                    }, 1500);
+                } else {
+                    showError(data.detail || 'Login failed. Please try again.');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Network error. Please check your connection and try again.');
+            } finally {
+                setButtonLoading(button, false);
+            }
+        });
+
+        // Register form handling
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fullName = document.getElementById('registerName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const button = document.getElementById('registerButton');
+            
+            if (!email || !password || !confirmPassword) {
+                showError('Please fill in all required fields');
+                return;
+            }
+            
+            if (password !== confirmPassword) {
+                showError('Passwords do not match');
+                return;
+            }
+            
+            if (password.length < 6) {
+                showError('Password must be at least 6 characters long');
+                return;
+            }
+            
+            setButtonLoading(button, true);
+            clearMessages();
+            
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password,
+                        confirm_password: confirmPassword,
+                        full_name: fullName || undefined
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    showSuccess('Account created successfully! You can now sign in.');
+                    
+                    // Switch to login form
+                    setTimeout(() => {
+                        showLogin();
+                        document.getElementById('loginEmail').value = email;
+                    }, 2000);
+                } else {
+                    showError(data.detail || 'Registration failed. Please try again.');
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                showError('Network error. Please check your connection and try again.');
+            } finally {
+                setButtonLoading(button, false);
+            }
+        });
+
+        // Check if user is already logged in or handle email confirmation
+        window.addEventListener('load', () => {
+            // Check for email confirmation in URL hash
+            const hash = window.location.hash;
+            if (hash.includes('access_token')) {
+                // Extract tokens from URL hash
+                const params = new URLSearchParams(hash.substring(1));
+                const accessToken = params.get('access_token');
+                const refreshToken = params.get('refresh_token');
+                
+                if (accessToken) {
+                    // Store tokens
+                    localStorage.setItem('access_token', accessToken);
+                    if (refreshToken) {
+                        localStorage.setItem('refresh_token', refreshToken);
+                    }
+                    
+                    showSuccess('Email confirmed successfully! Redirecting...');
+                    
+                    // Clear the hash and redirect
+                    setTimeout(() => {
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                        window.location.href = '/static/index.html';
+                    }, 1500);
+                    return;
+                }
+            }
+            
+            // Check for errors in URL hash
+            if (hash.includes('error')) {
+                const params = new URLSearchParams(hash.substring(1));
+                const error = params.get('error_description') || params.get('error');
+                showError(`Email confirmation failed: ${decodeURIComponent(error)}`);
+                
+                // Clear the hash
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return;
+            }
+            
+            // Check if user is already logged in
+            const token = localStorage.getItem('access_token');
+            if (token) {
+                // User is already logged in, redirect to main app
+                window.location.href = '/static/index.html';
+            }
+        });
+    </script>
+</body>
+</html>
