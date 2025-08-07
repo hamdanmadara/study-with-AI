@@ -11,6 +11,7 @@ from app.models.document import Document, DocumentType, ProcessingStatus
 from app.services.text_extraction import text_extraction_service
 from app.services.vector_store import vector_store_service
 from app.services.queue_service import queue_service
+from app.services.r2_storage import r2_storage_service
 from app.core.config import settings
 
 class DocumentProcessor:
@@ -24,9 +25,11 @@ class DocumentProcessor:
             await queue_service.start_workers()
             self._queue_initialized = True
     
-    async def process_document(self, file_path: str, filename: str) -> Document:
+    async def process_document(self, file_path: str, filename: str, document_id: str = None, 
+                             storage_info: Dict = None, storage_type: str = "local") -> Document:
         """Queue uploaded document for processing"""
-        document_id = str(uuid.uuid4())
+        if document_id is None:
+            document_id = str(uuid.uuid4())
         
         # Determine file type
         file_extension = Path(filename).suffix.lower()
@@ -39,15 +42,25 @@ class DocumentProcessor:
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
         
-        # Create document record
+        # Create document record with storage info
         document = Document(
             id=document_id,
             filename=filename,
             file_type=file_type,
-            file_path=file_path,
+            file_path=file_path,  # For R2, this is the object key
             status=ProcessingStatus.PENDING,
-            created_at=datetime.now()
+            created_at=datetime.now(),
+            storage_type=storage_type
         )
+        
+        # Add R2-specific fields if using R2 storage
+        if storage_type == "r2" and storage_info:
+            document.r2_object_key = storage_info.get('object_key')
+            document.r2_bucket_name = storage_info.get('bucket_name')
+            document.file_url = storage_info.get('file_url')
+            document.file_size = storage_info.get('file_size')
+        elif storage_type == "local" and storage_info:
+            document.file_size = storage_info.get('file_size')
         
         # Store in processing cache
         self.processing_documents[document_id] = document
@@ -58,7 +71,7 @@ class DocumentProcessor:
         # Add to queue instead of processing immediately
         await queue_service.add_document_to_queue(document, self._process_document_async)
         
-        logger.info(f"Document {document_id} ({filename}) queued for processing")
+        logger.info(f"Document {document_id} ({filename}) queued for processing using {storage_type} storage")
         
         return document
     
@@ -70,7 +83,10 @@ class DocumentProcessor:
             document.processing_started_at = datetime.now()
             self.processing_documents[document.id] = document
             
-            logger.info(f"Starting processing for document {document.id}")
+            logger.info(f"Starting processing for document {document.id} from {document.storage_type} storage")
+            
+            # Get local file path for processing
+            local_file_path = await self._get_local_file_path(document)
             
             # Create progress callback for video processing
             def update_progress(progress_data):
@@ -94,21 +110,26 @@ class DocumentProcessor:
                 self.processing_documents[document.id] = document
                 logger.info(f"Progress update for {document.id}: {document.processed_segments}/{document.total_segments} segments")
             
-            # Extract text based on file type
-            if document.file_type == DocumentType.PDF:
-                text_content = await text_extraction_service.extract_text_from_pdf(document.file_path)
-            elif document.file_type == DocumentType.VIDEO:
-                text_content = await text_extraction_service.extract_text_from_video(
-                    document.file_path, 
-                    progress_callback=update_progress
-                )
-            elif document.file_type == DocumentType.AUDIO:
-                text_content = await text_extraction_service.extract_text_from_audio(
-                    document.file_path, 
-                    progress_callback=update_progress
-                )
-            else:
-                raise ValueError(f"Unsupported file type: {document.file_type}")
+            # Extract text based on file type using local file path
+            try:
+                if document.file_type == DocumentType.PDF:
+                    text_content = await text_extraction_service.extract_text_from_pdf(local_file_path)
+                elif document.file_type == DocumentType.VIDEO:
+                    text_content = await text_extraction_service.extract_text_from_video(
+                        local_file_path, 
+                        progress_callback=update_progress
+                    )
+                elif document.file_type == DocumentType.AUDIO:
+                    text_content = await text_extraction_service.extract_text_from_audio(
+                        local_file_path, 
+                        progress_callback=update_progress
+                    )
+                else:
+                    raise ValueError(f"Unsupported file type: {document.file_type}")
+            finally:
+                # Clean up temporary file if it was downloaded from R2
+                if document.storage_type == "r2":
+                    await self._cleanup_temp_file(local_file_path)
             
             # Store text content
             document.text_content = text_content
@@ -160,9 +181,36 @@ class DocumentProcessor:
         """Get current queue status"""
         return queue_service.get_queue_status()
     
-    def get_estimated_wait_time(self):
-        """Get estimated wait time for new uploads"""
-        return queue_service.get_estimated_wait_time()
+    def get_estimated_wait_time(self, filename: str = ''):
+        """Get estimated wait time for new uploads based on file type"""
+        # Extract file extension to determine file type
+        file_extension = filename.lower().split('.')[-1] if '.' in filename else 'pdf'
+        return queue_service.get_estimated_wait_time(file_extension)
+    
+    async def _get_local_file_path(self, document: Document) -> str:
+        """Get local file path for processing, downloading from R2 if necessary"""
+        if document.storage_type == "r2":
+            # Download file from R2 to temporary location
+            if document.r2_object_key:
+                logger.info(f"Downloading file from R2: {document.r2_object_key}")
+                local_path = await r2_storage_service.download_file(document.r2_object_key)
+                logger.info(f"File downloaded to: {local_path}")
+                return local_path
+            else:
+                # Fallback to using file_path as object key
+                logger.info(f"Downloading file from R2 using file_path: {document.file_path}")
+                local_path = await r2_storage_service.download_file(document.file_path)
+                return local_path
+        else:
+            # Local storage - return file_path directly
+            return document.file_path
+    
+    async def _cleanup_temp_file(self, file_path: str):
+        """Clean up temporary file after processing"""
+        try:
+            await r2_storage_service.cleanup_temp_file(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temporary file {file_path}: {e}")
     
     async def delete_document(self, document_id: str):
         """Delete document and its data"""

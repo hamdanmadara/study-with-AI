@@ -18,7 +18,7 @@ class Document(BaseModel):
     id: str
     filename: str
     file_type: DocumentType
-    file_path: str
+    file_path: str  # For backward compatibility, now stores R2 object key
     status: ProcessingStatus
     text_content: Optional[str] = None
     chunk_count: Optional[int] = None
@@ -26,6 +26,10 @@ class Document(BaseModel):
     queued_at: Optional[datetime] = None
     processed_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    
+    # Storage fields
+    file_size: Optional[int] = None  # File size in bytes
+    storage_type: str = "supabase"  # Storage type: "local" or "supabase"
     
     # Progress tracking fields
     total_duration: Optional[float] = None  # Total video duration in seconds

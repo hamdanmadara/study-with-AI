@@ -9,8 +9,18 @@
 <body>
     <div class="container">
         <header>
-            <h1>📚 Study AI Assistant</h1>
-            <p>Upload documents or videos and interact with AI-powered features</p>
+            <div class="header-content">
+                <div class="header-left">
+                    <h1>📚 Study AI Assistant</h1>
+                    <p>Upload documents or videos and interact with AI-powered features</p>
+                </div>
+                <div class="header-right">
+                    <div class="user-info" id="userInfo" style="display: none;">
+                        <span class="user-email" id="userEmail"></span>
+                        <button class="logout-btn" id="logoutBtn">Logout</button>
+                    </div>
+                </div>
+            </div>
         </header>
 
         <main>
@@ -20,10 +30,10 @@
                 <div class="upload-area" id="uploadArea">
                     <div class="upload-content">
                         <div class="upload-icon">📎</div>
-                        <p>Drag & drop your file here or click to browse</p>
-                        <p class="upload-info">Supported: PDF, MP4, AVI, MOV, MKV, WEBM, MP3, WAV, M4A, AAC, FLAC (Max 100MB)</p>
-                        <input type="file" id="fileInput" accept=".pdf,.mp3,.wav,.m4a,.aac,.flac,.mp4,.avi,.mov,.mkv,.webm,video/*,audio/*" hidden>
-                        <button class="upload-btn" id="uploadBtn">Choose File</button>
+                        <p>Drag & drop your files here or click to browse</p>
+                        <p class="upload-info">Supported: PDF, MP4, AVI, MOV, MKV, WEBM, MP3, WAV, M4A, AAC, FLAC (Max 100MB each)</p>
+                        <input type="file" id="fileInput" accept=".pdf,.mp3,.wav,.m4a,.aac,.flac,.mp4,.avi,.mov,.mkv,.webm,video/*,audio/*" multiple hidden>
+                        <button class="upload-btn" id="uploadBtn">Choose Files</button>
                     </div>
                 </div>
                 
@@ -35,21 +45,52 @@
                 </div>
             </section>
 
-            <!-- Documents List -->
-            <section class="documents-section">
-                <div class="documents-header">
-                    <h2>📄 Your Documents</h2>
-                    <button class="refresh-btn" id="refreshBtn" onclick="refreshDocuments()">🔄 Refresh</button>
-                </div>
-                <div class="documents-list" id="documentsList">
-                    <p class="no-documents">No documents uploaded yet</p>
+            <!-- Upload Queue Section -->
+            <section class="upload-queue-section" id="uploadQueueSection" style="display: none;">
+                <h2>📤 Upload Queue</h2>
+                <div class="upload-queue-list" id="uploadQueueList">
+                    <!-- Upload items will be added here dynamically -->
                 </div>
             </section>
 
-            <!-- Features Section -->
-            <section class="features-section" id="featuresSection" style="display: none;">
-                <!-- Features will be populated by JavaScript -->
-            </section>
+            <!-- Main Content Area - Split Layout -->
+            <div class="main-content" id="mainContent" style="display: none;">
+                <!-- Left Side - Document Viewer and Features -->
+                <div class="content-left">
+                    <!-- Document Viewer Section -->
+                    <section class="viewer-section">
+                        <div class="viewer-header">
+                            <h2 id="viewerTitle">📄 Select a document to view</h2>
+                        </div>
+                        <div class="document-viewer" id="documentViewer">
+                            <div class="no-document-selected">
+                                <div class="empty-state">
+                                    <div class="empty-icon">📄</div>
+                                    <p>Select a document from the list to view it here</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Features Section -->
+                    <section class="features-section" id="featuresSection" style="display: none;">
+                        <!-- Features will be populated by JavaScript -->
+                    </section>
+                </div>
+
+                <!-- Right Side - Documents List -->
+                <div class="content-right">
+                    <section class="documents-sidebar">
+                        <div class="documents-header">
+                            <h2>📄 Your Documents</h2>
+                            <button class="refresh-btn" id="refreshBtn" onclick="refreshDocuments()">🔄 Refresh</button>
+                        </div>
+                        <div class="documents-list" id="documentsList">
+                            <p class="no-documents">No documents uploaded yet</p>
+                        </div>
+                    </section>
+                </div>
+            </div>
         </main>
 
         <!-- Loading Modal -->
@@ -62,8 +103,17 @@
 
         <!-- Toast Notifications -->
         <div class="toast" id="toast"></div>
+        
+        <!-- Authentication required overlay -->
+        <div class="auth-overlay" id="authOverlay" style="display: none;">
+            <div class="auth-overlay-content">
+                <h2>🔐 Authentication Required</h2>
+                <p>Please sign in to access Study AI Assistant</p>
+                <a href="/static/auth.html" class="auth-btn">Sign In / Sign Up</a>
+            </div>
+        </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=20250804"></script>
 </body>
 </html>

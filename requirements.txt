@@ -7,8 +7,9 @@ pydantic-settings
 
 # Text extraction
 pypdf
-moviepy
+moviepy==1.0.3
 openai-whisper
+ffmpeg-python
 
 # Vector database and embeddings
 chromadb
@@ -17,6 +18,25 @@ sentence-transformers
 # LLM integration
 openai
 httpx
+aiohttp
+
+# Cloud storage - keeping R2 temporarily during migration
+boto3
+botocore
+
+# Supabase integration
+supabase
+postgrest
+gotrue
+realtime
+storage3
+asyncpg
+psycopg2-binary
+
+# Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
 
 # Utilities
 python-dotenv
